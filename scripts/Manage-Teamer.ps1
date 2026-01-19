@@ -5,8 +5,8 @@
 .DESCRIPTION
     Provides Create, Read, Update, Delete operations for virtual desktops and windows.
 
-    SAFETY: Desktops 1 and 2 (index 0, 1) are PROTECTED and cannot be modified.
-    All destructive operations are only allowed on Desktop 3+ (index 2+).
+    SAFETY: All desktops existing at module load time are PROTECTED.
+    Only newly created desktops (after loading) can be modified/deleted.
 
 .NOTES
     Requires: Windows 10 2004+ or Windows 11
@@ -15,7 +15,8 @@
 
 #region Constants
 
-$script:PROTECTED_DESKTOPS = @(0, 1)  # Desktop 1 and 2 (indices 0, 1) are protected
+# Dynamic protection: set after module init to current desktop count
+$script:PROTECTED_DESKTOP_COUNT = 0  # Will be set during initialization
 $script:PROJECT_ROOT = "E:\Projects\teamer"
 
 #endregion
@@ -211,6 +212,9 @@ function Initialize-TeamerModule {
 # Initialize on module load
 Initialize-TeamerModule
 
+# Capture current desktop count as protection boundary
+$script:PROTECTED_DESKTOP_COUNT = Get-DesktopCount
+
 #endregion
 
 #region Safety Functions
@@ -218,7 +222,7 @@ Initialize-TeamerModule
 function Test-DesktopProtected {
     <#
     .SYNOPSIS
-        Checks if a desktop index is protected (Desktop 1 or 2)
+        Checks if a desktop index is protected (existed at module load time)
     .PARAMETER Index
         The 0-based desktop index
     .OUTPUTS
@@ -228,7 +232,7 @@ function Test-DesktopProtected {
         [Parameter(Mandatory)]
         [int]$Index
     )
-    return $Index -in $script:PROTECTED_DESKTOPS
+    return $Index -lt $script:PROTECTED_DESKTOP_COUNT
 }
 
 function Assert-SafeDesktopOperation {
@@ -250,7 +254,8 @@ function Assert-SafeDesktopOperation {
 
     if (Test-DesktopProtected -Index $Index) {
         $desktopNum = $Index + 1
-        throw "BLOCKED: Cannot $Operation on protected Desktop $desktopNum (index $Index). Only Desktop 3+ (index 2+) can be modified."
+        $minManageable = $script:PROTECTED_DESKTOP_COUNT + 1
+        throw "BLOCKED: Cannot $Operation on protected Desktop $desktopNum (index $Index). Only Desktop $minManageable+ (index $($script:PROTECTED_DESKTOP_COUNT)+) can be modified."
     }
 }
 
@@ -1052,18 +1057,22 @@ function Close-TeamerWindow {
 #endregion
 
 # Display welcome message when dot-sourced
+$minManageableDesktop = $script:PROTECTED_DESKTOP_COUNT + 1
+$protectedList = if ($script:PROTECTED_DESKTOP_COUNT -eq 1) { "1" } else { "1-$($script:PROTECTED_DESKTOP_COUNT)" }
+
 Write-Host ""
 Write-Host "Teamer CRUD Module Loaded" -ForegroundColor Green
-Write-Host "Protected Desktops: 1, 2 (indices 0, 1)" -ForegroundColor Yellow
+Write-Host "Protected Desktops: $protectedList (indices 0-$($script:PROTECTED_DESKTOP_COUNT - 1)) - $($script:PROTECTED_DESKTOP_COUNT) existing desktop(s)" -ForegroundColor Yellow
+Write-Host "Manageable: Desktop $minManageableDesktop+ (newly created)" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Commands:" -ForegroundColor Cyan
 Write-Host "  Show-TeamerTree               - Display system tree" -ForegroundColor White
 Write-Host "  New-TeamerDesktop             - Create new desktop" -ForegroundColor White
 Write-Host "  New-TeamerTerminal            - Launch terminal" -ForegroundColor White
-Write-Host "  Rename-TeamerDesktop          - Rename desktop (3+)" -ForegroundColor White
-Write-Host "  Move-TeamerWindow             - Move window (to 3+)" -ForegroundColor White
+Write-Host "  Rename-TeamerDesktop          - Rename desktop ($minManageableDesktop+)" -ForegroundColor White
+Write-Host "  Move-TeamerWindow             - Move window (to $minManageableDesktop+)" -ForegroundColor White
 Write-Host "  Switch-TeamerDesktop          - Switch desktop" -ForegroundColor White
 Write-Host "  Pin-TeamerWindow              - Pin/unpin window" -ForegroundColor White
-Write-Host "  Remove-TeamerDesktop          - Remove desktop (3+)" -ForegroundColor White
-Write-Host "  Close-TeamerWindow            - Close window (on 3+)" -ForegroundColor White
+Write-Host "  Remove-TeamerDesktop          - Remove desktop ($minManageableDesktop+)" -ForegroundColor White
+Write-Host "  Close-TeamerWindow            - Close window (on $minManageableDesktop+)" -ForegroundColor White
 Write-Host ""

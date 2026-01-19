@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.powershellgallery.com)",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"E:\\\\Projects\\\\teamer\\\\scripts\\\\Get-SystemConfig.ps1\")",
+      "Bash(powershell -ExecutionPolicy Bypass -Command \"Get-Module -ListAvailable -Name VirtualDesktop | Select-Object Name, Version, ModuleBase | Format-List\")",
+      "Bash(powershell -ExecutionPolicy Bypass -Command \"$env:PSModulePath -split '';''\")",
+      "Bash(powershell:*)",
+      "Bash(dir \"C:\\\\Users\\\\zepef\\\\Documents\\\\WindowsPowerShell\\\\Modules\")",
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(git init:*)"
+    ]
+  }
+}

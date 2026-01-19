@@ -1,0 +1,8 @@
+# Config output files (system-specific)
+config/*.json
+
+# Windows artifacts
+nul
+
+# PowerShell module cache
+*.psm1.cache

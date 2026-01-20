@@ -33,6 +33,43 @@
             "type": "string",
             "description": "Name for the virtual desktop"
           },
+          "monitor": {
+            "type": "string",
+            "enum": ["primary", "secondary", "tertiary", "all"],
+            "default": "primary",
+            "description": "Which monitor this desktop targets"
+          },
+          "grid": {
+            "type": "object",
+            "description": "Grid configuration for window tiling on this desktop",
+            "properties": {
+              "rows": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 12,
+                "description": "Number of rows"
+              },
+              "cols": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 12,
+                "description": "Number of columns"
+              },
+              "gap": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 8,
+                "description": "Gap between windows in pixels"
+              },
+              "margin": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 8,
+                "description": "Margin around the grid in pixels"
+              }
+            },
+            "required": ["rows", "cols"]
+          },
           "windows": {
             "type": "array",
             "description": "Windows to open on this desktop",

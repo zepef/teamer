@@ -896,6 +896,13 @@ function Start-TeamerEnvironment {
 
             Start-Sleep -Milliseconds 300
         }
+
+        # Apply tiling if grid is defined for this desktop
+        if ($desktop.grid) {
+            Write-Host "  Applying tiling ($($desktop.grid.rows)x$($desktop.grid.cols) grid)..." -ForegroundColor DarkGray
+            Start-Sleep -Milliseconds 500  # Wait for windows to fully open
+            Apply-TeamerDesktopTiling -Desktop $desktop -BaseWorkingDirectory $baseWorkDir
+        }
     }
 
     # Track this environment as active and save state
@@ -1623,6 +1630,270 @@ function Move-TeamerWindow {
 
 #endregion
 
+#region Tiling Functions
+
+$script:TILING_FILE = Join-Path $script:ENVIRONMENTS_ROOT "tiling.json"
+
+function Get-TeamerTiling {
+    <#
+    .SYNOPSIS
+        Gets tiling configuration for a desktop
+    .PARAMETER DesktopName
+        Name of the desktop to get tiling for
+    #>
+    param(
+        [Parameter()]
+        [string]$DesktopName
+    )
+
+    if (-not (Test-Path $script:TILING_FILE)) {
+        return $null
+    }
+
+    $content = Get-Content -Path $script:TILING_FILE -Raw -Encoding UTF8
+    $tiling = $content | ConvertFrom-Json
+
+    if ([string]::IsNullOrWhiteSpace($DesktopName)) {
+        return $tiling.desktops
+    }
+
+    return $tiling.desktops.$DesktopName
+}
+
+function Set-TeamerTiling {
+    <#
+    .SYNOPSIS
+        Sets tiling configuration for a desktop
+    .PARAMETER DesktopName
+        Name of the desktop
+    .PARAMETER Grid
+        Grid configuration hashtable with rows, cols, gap, margin
+    .PARAMETER Windows
+        Array of window position configurations
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$DesktopName,
+
+        [Parameter(Mandatory)]
+        [hashtable]$Grid,
+
+        [Parameter(Mandatory)]
+        [array]$Windows
+    )
+
+    # Load existing or create new
+    $tiling = @{ desktops = @{} }
+    if (Test-Path $script:TILING_FILE) {
+        $content = Get-Content -Path $script:TILING_FILE -Raw -Encoding UTF8
+        $existing = $content | ConvertFrom-Json
+        # Convert to hashtable
+        foreach ($prop in $existing.desktops.PSObject.Properties) {
+            $tiling.desktops[$prop.Name] = $prop.Value
+        }
+    }
+
+    # Set the desktop tiling
+    $tiling.desktops[$DesktopName] = @{
+        grid = $Grid
+        windows = $Windows
+    }
+
+    # Save
+    $tiling.'$schema' = "schemas/tiling.schema.json"
+    $json = $tiling | ConvertTo-Json -Depth 10
+    $json | Out-File -FilePath $script:TILING_FILE -Encoding UTF8 -Force
+
+    Write-Host "Saved tiling for desktop: $DesktopName" -ForegroundColor Green
+}
+
+function Get-DesktopWindows {
+    <#
+    .SYNOPSIS
+        Gets all visible windows on the current desktop
+    #>
+    $windows = @()
+    Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | ForEach-Object {
+        $windows += @{
+            Process = $_
+            Handle = $_.MainWindowHandle
+            Title = $_.MainWindowTitle
+            ProcessName = $_.ProcessName
+        }
+    }
+    return $windows
+}
+
+function Apply-TeamerTiling {
+    <#
+    .SYNOPSIS
+        Applies tiling configuration to windows on current desktop
+    .PARAMETER DesktopName
+        Name of the desktop configuration to apply
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$DesktopName
+    )
+
+    $config = Get-TeamerTiling -DesktopName $DesktopName
+    if (-not $config) {
+        Write-Warning "No tiling configuration found for desktop: $DesktopName"
+        return
+    }
+
+    $grid = $config.grid
+    $windowConfigs = $config.windows
+
+    Write-Host "Applying tiling for: $DesktopName ($($grid.rows)x$($grid.cols) grid)" -ForegroundColor Cyan
+
+    # Get all windows on current desktop
+    $desktopWindows = Get-DesktopWindows
+
+    foreach ($winConfig in $windowConfigs) {
+        $match = $winConfig.match
+        $matchedWindow = $null
+
+        foreach ($win in $desktopWindows) {
+            $matched = $false
+
+            if ($match.process) {
+                if ($win.ProcessName -match $match.process) {
+                    $matched = $true
+                }
+            }
+            if ($match.title) {
+                if ($win.Title -match $match.title) {
+                    $matched = $true
+                }
+            }
+
+            if ($matched) {
+                $matchedWindow = $win
+                break
+            }
+        }
+
+        if ($matchedWindow) {
+            $row = $winConfig.row
+            $col = $winConfig.col
+            $rowSpan = if ($winConfig.rowSpan) { $winConfig.rowSpan } else { 1 }
+            $colSpan = if ($winConfig.colSpan) { $winConfig.colSpan } else { 1 }
+
+            $bounds = Get-TeamerGridCellBounds -Grid $grid -Row $row -Col $col -RowSpan $rowSpan -ColSpan $colSpan
+
+            Write-Host "  Moving $($matchedWindow.ProcessName) to ($row,$col) span($rowSpan,$colSpan)" -ForegroundColor DarkGray
+
+            [Win32Window]::MoveWindow(
+                $matchedWindow.Handle,
+                $bounds.X,
+                $bounds.Y,
+                $bounds.Width,
+                $bounds.Height,
+                $true
+            ) | Out-Null
+        }
+        else {
+            $matchStr = if ($match.process) { $match.process } elseif ($match.title) { $match.title } else { "unknown" }
+            Write-Host "  No window found matching: $matchStr" -ForegroundColor Yellow
+        }
+    }
+
+    Write-Host "Tiling applied." -ForegroundColor Green
+}
+
+function Apply-TeamerDesktopTiling {
+    <#
+    .SYNOPSIS
+        Applies tiling to windows based on desktop config from environment
+    .DESCRIPTION
+        Uses the grid config from desktop and row/col from each window definition
+        to position windows. Matches windows by process name or title.
+    .PARAMETER Desktop
+        Desktop configuration object from environment
+    .PARAMETER BaseWorkingDirectory
+        Base working directory for the environment
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [object]$Desktop,
+
+        [Parameter()]
+        [string]$BaseWorkingDirectory
+    )
+
+    $grid = $Desktop.grid
+    if (-not $grid) {
+        Write-Warning "No grid defined for desktop: $($Desktop.name)"
+        return
+    }
+
+    # Get all windows on current desktop
+    $desktopWindows = Get-DesktopWindows
+
+    foreach ($window in $Desktop.windows) {
+        # Skip windows without position info
+        if ($null -eq $window.row -and $null -eq $window.col) {
+            continue
+        }
+
+        $row = if ($null -ne $window.row) { $window.row } else { 0 }
+        $col = if ($null -ne $window.col) { $window.col } else { 0 }
+        $rowSpan = if ($window.rowSpan) { $window.rowSpan } else { 1 }
+        $colSpan = if ($window.colSpan) { $window.colSpan } else { 1 }
+
+        # Determine what to match based on window type
+        $matchPattern = $null
+        $matchType = "process"
+
+        switch ($window.type) {
+            'terminal' {
+                # Match Windows Terminal
+                $matchPattern = "WindowsTerminal"
+            }
+            'app' {
+                # Extract process name from path (without .exe)
+                $appName = [System.IO.Path]::GetFileNameWithoutExtension($window.path)
+                $matchPattern = $appName
+            }
+            'browser' {
+                # Common browser process names
+                $matchPattern = "chrome|firefox|msedge|brave"
+            }
+        }
+
+        if (-not $matchPattern) {
+            continue
+        }
+
+        # Find matching window
+        $matchedWindow = $null
+        foreach ($win in $desktopWindows) {
+            if ($win.ProcessName -match $matchPattern) {
+                $matchedWindow = $win
+                break
+            }
+        }
+
+        if ($matchedWindow) {
+            $bounds = Get-TeamerGridCellBounds -Grid $grid -Row $row -Col $col -RowSpan $rowSpan -ColSpan $colSpan
+
+            Write-Host "    $($matchedWindow.ProcessName) -> ($row,$col) span($rowSpan,$colSpan)" -ForegroundColor DarkGray
+
+            [Win32Window]::MoveWindow(
+                $matchedWindow.Handle,
+                $bounds.X,
+                $bounds.Y,
+                $bounds.Width,
+                $bounds.Height,
+                $true
+            ) | Out-Null
+        }
+    }
+}
+
+#endregion
+
 #region State Loading (deferred)
 
 # Load saved state now that all functions are defined
@@ -1656,6 +1927,11 @@ Write-Host ""
 Write-Host "Layout Commands:" -ForegroundColor Cyan
 Write-Host "  Get-TeamerLayout            - List or get layout(s)" -ForegroundColor White
 Write-Host "  Get-TeamerZone              - Resolve zone from layout" -ForegroundColor White
+Write-Host ""
+Write-Host "Tiling Commands:" -ForegroundColor Cyan
+Write-Host "  Get-TeamerTiling            - Get tiling config for desktop" -ForegroundColor White
+Write-Host "  Set-TeamerTiling            - Set tiling config for desktop" -ForegroundColor White
+Write-Host "  Apply-TeamerTiling          - Apply tiling to current windows" -ForegroundColor White
 Write-Host ""
 
 #endregion

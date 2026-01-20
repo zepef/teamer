@@ -4,10 +4,7 @@
   "shell": "wsl",
   "distribution": "Ubuntu-24.04",
   "terminalProfile": "Ubuntu",
-  "startupCommands": [
-    "cd ~",
-    "source ~/.bashrc"
-  ],
+  "startupCommands": [],
   "environment": {
     "NODE_ENV": "development"
   }

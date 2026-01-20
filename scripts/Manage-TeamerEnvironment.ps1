@@ -1228,12 +1228,12 @@ function Start-TeamerTerminalFromProfile {
                 $cmdParts += $Command
             }
 
-            # If there are commands, wrap them in bash -c
+            # If there are commands, wrap them in bash -c, otherwise just launch WSL
             if ($cmdParts.Count -gt 0) {
                 $bashCmd = $cmdParts -join ' && '
                 # Escape for Windows command line
                 $bashCmd = $bashCmd -replace '"', '\"'
-                $wslCmd += " -- bash -c `"$bashCmd; exec bash`""
+                $wslCmd += " -- bash -c `"$bashCmd && exec bash`""
             }
 
             $wtArgs += $wslCmd

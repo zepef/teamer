@@ -19,8 +19,8 @@ $config = @{
             grid = @{
                 rows = 2
                 cols = 2
-                gap = 8
-                margin = 8
+                gap = 2
+                margin = 2
             }
             windows = @(
                 @{

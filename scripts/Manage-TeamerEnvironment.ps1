@@ -824,9 +824,23 @@ function Start-TeamerEnvironment {
         $desktopIndex = $result.Index
         $createdDesktops += $desktopIndex
 
-        # Switch to the new desktop
+        # IMPORTANT: Switch to target desktop FIRST, then launch windows
+        # This ensures windows open on the correct desktop
+        Write-Host "  Switching to desktop $($desktopIndex + 1)..." -ForegroundColor DarkGray
         Switch-TeamerDesktop -Index $desktopIndex | Out-Null
         Start-Sleep -Milliseconds 500
+
+        # Verify we're on the correct desktop before proceeding
+        $currentDesktop = Get-CurrentDesktop
+        $currentIndex = Get-DesktopIndex -Desktop $currentDesktop
+        $targetDesktop = Get-Desktop -Index $desktopIndex
+        if ($currentIndex -ne $desktopIndex) {
+            Write-Warning "Failed to switch to desktop $desktopIndex, retrying..."
+            Switch-TeamerDesktop -Index $desktopIndex | Out-Null
+            Start-Sleep -Milliseconds 500
+        }
+
+        Write-Host "  Launching windows on desktop $($desktopIndex + 1)..." -ForegroundColor DarkGray
 
         # Load layout for grid positioning
         $layout = $null
@@ -856,12 +870,15 @@ function Start-TeamerEnvironment {
 
         $baseWorkDir = if ($config.workingDirectory) { $config.workingDirectory } else { $PWD }
 
+        # Collect window handles as we launch them
+        $launchedWindows = @()
+
         # Launch terminal tab groups
         foreach ($groupName in $terminalGroups.Keys) {
             $terminals = $terminalGroups[$groupName]
-            Write-Host "  Launching terminal group '$groupName' ($($terminals.Count) tabs)" -ForegroundColor DarkGray
+            Write-Host "    Terminal group '$groupName' ($($terminals.Count) tabs)" -ForegroundColor DarkGray
             Start-TeamerTerminalTabGroup -DesktopIndex $desktopIndex -Terminals $terminals -BaseWorkingDirectory $baseWorkDir
-            Start-Sleep -Milliseconds 500
+            Start-Sleep -Milliseconds 1000
         }
 
         # Launch ungrouped windows
@@ -880,28 +897,30 @@ function Start-TeamerEnvironment {
 
             switch ($window.type) {
                 'terminal' {
-                    Write-Host "  Launching terminal: $($window.profile)" -ForegroundColor DarkGray
+                    Write-Host "    Terminal: $($window.profile)" -ForegroundColor DarkGray
                     Start-TeamerTerminalFromProfile -DesktopIndex $desktopIndex -ProfileName $window.profile -WorkingDirectory $workDir -Command $window.command -Title $window.title -TabColor $window.tabColor
                 }
                 'app' {
-                    Write-Host "  Launching app: $($window.path)" -ForegroundColor DarkGray
+                    Write-Host "    App: $($window.path)" -ForegroundColor DarkGray
                     $appArgs = if ($window.args) { $window.args } else { @() }
                     Start-TeamerApp -DesktopIndex $desktopIndex -Path $window.path -Arguments $appArgs -WorkingDirectory $workDir
                 }
                 'browser' {
-                    Write-Host "  Opening browser: $($window.url)" -ForegroundColor DarkGray
+                    Write-Host "    Browser: $($window.url)" -ForegroundColor DarkGray
                     Start-TeamerBrowser -Url $window.url
                 }
             }
 
-            Start-Sleep -Milliseconds 300
+            Start-Sleep -Milliseconds 500
         }
+
+        # Wait for all windows to fully initialize
+        Start-Sleep -Milliseconds 1500
 
         # Apply tiling if grid is defined for this desktop
         if ($desktop.grid) {
             Write-Host "  Applying tiling ($($desktop.grid.rows)x$($desktop.grid.cols) grid)..." -ForegroundColor DarkGray
-            Start-Sleep -Milliseconds 500  # Wait for windows to fully open
-            Apply-TeamerDesktopTiling -Desktop $desktop -BaseWorkingDirectory $baseWorkDir
+            Apply-TeamerDesktopTiling -Desktop $desktop -BaseWorkingDirectory $baseWorkDir -DesktopIndex $desktopIndex
         }
     }
 
@@ -1296,7 +1315,8 @@ function Start-TeamerTerminalFromProfile {
 function Start-TeamerApp {
     <#
     .SYNOPSIS
-        Launches an application
+        Launches an application and moves it to the target desktop.
+        If the app is already running, reuses the existing window instead of launching a new instance.
     #>
     param(
         [Parameter(Mandatory)]
@@ -1312,6 +1332,29 @@ function Start-TeamerApp {
         [string]$WorkingDirectory
     )
 
+    $appName = [System.IO.Path]::GetFileNameWithoutExtension($Path)
+
+    # Check if app is already running with a window
+    $existingProc = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ProcessName -match "^$appName$" -and $_.MainWindowHandle -ne [IntPtr]::Zero
+    } | Select-Object -First 1
+
+    if ($existingProc) {
+        # App already running - just move it to target desktop
+        Write-Host "    $appName already running, moving to desktop $($DesktopIndex + 1)" -ForegroundColor DarkGray
+        try {
+            $targetDesktop = Get-Desktop -Index $DesktopIndex
+            if ($targetDesktop) {
+                Move-Window -Desktop $targetDesktop -Hwnd $existingProc.MainWindowHandle
+            }
+        }
+        catch {
+            Write-Warning "Could not move existing $appName to desktop $DesktopIndex : $_"
+        }
+        return
+    }
+
+    # App not running - launch it
     $startParams = @{
         FilePath = $Path
         PassThru = $true
@@ -1326,7 +1369,53 @@ function Start-TeamerApp {
     }
 
     try {
-        Start-Process @startParams | Out-Null
+        $process = Start-Process @startParams
+
+        # Wait for the main window to appear
+        $maxWait = 15  # seconds
+        $waited = 0
+        $hwnd = $null
+
+        while ($waited -lt $maxWait) {
+            Start-Sleep -Milliseconds 500
+            $waited += 0.5
+
+            # Method 1: Direct process MainWindowHandle
+            $process.Refresh()
+            if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
+                $hwnd = $process.MainWindowHandle
+                break
+            }
+
+            # Method 2: Find by process name (apps like Excel spawn new processes)
+            $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+                $_.ProcessName -match "^$appName$" -and $_.MainWindowHandle -ne [IntPtr]::Zero
+            }
+            if ($procs) {
+                $newest = $procs | Sort-Object StartTime -Descending | Select-Object -First 1
+                if ($newest) {
+                    $hwnd = $newest.MainWindowHandle
+                    break
+                }
+            }
+        }
+
+        if ($hwnd -and $hwnd -ne [IntPtr]::Zero) {
+            # Move window to target desktop
+            try {
+                $targetDesktop = Get-Desktop -Index $DesktopIndex
+                if ($targetDesktop) {
+                    Move-Window -Desktop $targetDesktop -Hwnd $hwnd
+                    Write-Host "    Moved $appName to desktop $($DesktopIndex + 1)" -ForegroundColor DarkGray
+                }
+            }
+            catch {
+                Write-Warning "Could not move $Path to desktop $DesktopIndex : $_"
+            }
+        }
+        else {
+            Write-Warning "Could not find main window for $Path within $maxWait seconds"
+        }
     }
     catch {
         Write-Warning "Failed to launch $Path : $_"
@@ -1499,6 +1588,10 @@ public class Win32Window {
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
 
+    // DWM API for getting extended frame bounds (visible window area without invisible borders)
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
+
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT {
         public int Left;
@@ -1509,8 +1602,56 @@ public class Win32Window {
 
     public const uint SWP_NOACTIVATE = 0x0010;
     public const uint SWP_NOZORDER = 0x0004;
+
+    // DWMWA_EXTENDED_FRAME_BOUNDS = 9 - gets the visible window bounds excluding invisible borders
+    public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+
+    // Get the invisible border offset for a window
+    // Returns the difference between window rect and extended frame bounds
+    public static void GetFrameOffset(IntPtr hwnd, out int left, out int top, out int right, out int bottom) {
+        RECT windowRect, extendedRect;
+        GetWindowRect(hwnd, out windowRect);
+        DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, out extendedRect, Marshal.SizeOf(typeof(RECT)));
+
+        // Invisible border = window rect - extended frame bounds
+        left = extendedRect.Left - windowRect.Left;
+        top = extendedRect.Top - windowRect.Top;
+        right = windowRect.Right - extendedRect.Right;
+        bottom = windowRect.Bottom - extendedRect.Bottom;
+    }
 }
 "@ -ErrorAction SilentlyContinue
+
+function Get-WindowFrameOffset {
+    <#
+    .SYNOPSIS
+        Gets the invisible border offset for a window.
+        Windows 10/11 have invisible borders (~7px) that affect positioning.
+    .PARAMETER Handle
+        Window handle
+    .RETURNS
+        Hashtable with Left, Top, Right, Bottom offsets
+    #>
+    param([IntPtr]$Handle)
+
+    # Windows 10/11 standard invisible border sizes
+    # These are consistent across most applications
+    # Left: ~7px invisible border
+    # Top: 0px (no invisible border at top)
+    # Right: ~7px invisible border
+    # Bottom: ~7px invisible border
+    #
+    # When we position a window at X,Y, the window frame (including invisible borders)
+    # is placed there. To have the VISIBLE window at X,Y, we need to move the frame
+    # left by 7px so the visible part ends up at the target position.
+
+    return @{
+        Left = 7
+        Top = 0
+        Right = 7
+        Bottom = 7
+    }
+}
 
 function Get-TeamerScreenBounds {
     <#
@@ -1530,7 +1671,8 @@ function Get-TeamerScreenBounds {
 function Get-TeamerGridCellBounds {
     <#
     .SYNOPSIS
-        Calculates the pixel bounds for a grid cell position
+        Calculates the pixel bounds for a grid cell position.
+        Ensures consistent gaps by calculating exact pixel positions.
     .PARAMETER Grid
         Grid configuration with rows, cols, gap, margin
     .PARAMETER Row
@@ -1563,24 +1705,56 @@ function Get-TeamerGridCellBounds {
 
     $rows = $Grid.rows
     $cols = $Grid.cols
-    $gap = if ($Grid.gap) { $Grid.gap } else { 0 }
-    $margin = if ($Grid.margin) { $Grid.margin } else { 0 }
+    $gap = if ($null -ne $Grid.gap) { $Grid.gap } else { 2 }
+    $margin = if ($null -ne $Grid.margin) { $Grid.margin } else { 2 }
 
-    # Calculate available space
-    $availableWidth = $screen.Width - (2 * $margin) - (($cols - 1) * $gap)
-    $availableHeight = $screen.Height - (2 * $margin) - (($rows - 1) * $gap)
+    # Calculate total space taken by gaps and margins
+    $totalGapsX = ($cols - 1) * $gap
+    $totalGapsY = ($rows - 1) * $gap
+    $totalMarginsX = 2 * $margin
+    $totalMarginsY = 2 * $margin
 
-    # Calculate cell size
-    $cellWidth = [math]::Floor($availableWidth / $cols)
-    $cellHeight = [math]::Floor($availableHeight / $rows)
+    # Available space for cells
+    $availableWidth = $screen.Width - $totalMarginsX - $totalGapsX
+    $availableHeight = $screen.Height - $totalMarginsY - $totalGapsY
 
-    # Calculate position
-    $x = $screen.X + $margin + ($Col * ($cellWidth + $gap))
-    $y = $screen.Y + $margin + ($Row * ($cellHeight + $gap))
+    # Base cell size (may have remainder)
+    $baseCellWidth = [math]::Floor($availableWidth / $cols)
+    $baseCellHeight = [math]::Floor($availableHeight / $rows)
 
-    # Calculate size with spans
-    $width = ($cellWidth * $ColSpan) + (($ColSpan - 1) * $gap)
-    $height = ($cellHeight * $RowSpan) + (($RowSpan - 1) * $gap)
+    # Distribute remainder pixels to last cells
+    $remainderX = $availableWidth - ($baseCellWidth * $cols)
+    $remainderY = $availableHeight - ($baseCellHeight * $rows)
+
+    # Calculate X position: margin + (cells before * cellWidth) + (gaps before * gap) + extra pixels for earlier cells
+    $x = $screen.X + $margin
+    for ($c = 0; $c -lt $Col; $c++) {
+        $x += $baseCellWidth + $gap
+        if ($c -ge ($cols - $remainderX)) { $x += 1 }  # Extra pixel for last cells
+    }
+
+    # Calculate Y position
+    $y = $screen.Y + $margin
+    for ($r = 0; $r -lt $Row; $r++) {
+        $y += $baseCellHeight + $gap
+        if ($r -ge ($rows - $remainderY)) { $y += 1 }  # Extra pixel for last cells
+    }
+
+    # Calculate width spanning multiple columns
+    $width = 0
+    for ($c = $Col; $c -lt ($Col + $ColSpan); $c++) {
+        $width += $baseCellWidth
+        if ($c -ge ($cols - $remainderX)) { $width += 1 }  # Extra pixel for last cells
+        if ($c -lt ($Col + $ColSpan - 1)) { $width += $gap }  # Add gap between spanned cells
+    }
+
+    # Calculate height spanning multiple rows
+    $height = 0
+    for ($r = $Row; $r -lt ($Row + $RowSpan); $r++) {
+        $height += $baseCellHeight
+        if ($r -ge ($rows - $remainderY)) { $height += 1 }  # Extra pixel for last cells
+        if ($r -lt ($Row + $RowSpan - 1)) { $height += $gap }  # Add gap between spanned rows
+    }
 
     return @{
         X = $x
@@ -1621,7 +1795,14 @@ function Move-TeamerWindow {
     }
 
     if ($Process.MainWindowHandle -ne [IntPtr]::Zero) {
-        [Win32Window]::MoveWindow($Process.MainWindowHandle, $X, $Y, $Width, $Height, $true) | Out-Null
+        # Get invisible border offset to compensate
+        $frameOffset = Get-WindowFrameOffset -Handle $Process.MainWindowHandle
+        $adjustedX = $X - $frameOffset.Left
+        $adjustedY = $Y - $frameOffset.Top
+        $adjustedWidth = $Width + $frameOffset.Left + $frameOffset.Right
+        $adjustedHeight = $Height + $frameOffset.Top + $frameOffset.Bottom
+
+        [Win32Window]::MoveWindow($Process.MainWindowHandle, $adjustedX, $adjustedY, $adjustedWidth, $adjustedHeight, $true) | Out-Null
         return $true
     }
 
@@ -1710,15 +1891,26 @@ function Set-TeamerTiling {
 function Get-DesktopWindows {
     <#
     .SYNOPSIS
-        Gets all visible windows on the current desktop
+        Gets all visible windows on the current desktop only
     #>
+    $currentDesktop = Get-CurrentDesktop
     $windows = @()
+
     Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | ForEach-Object {
-        $windows += @{
-            Process = $_
-            Handle = $_.MainWindowHandle
-            Title = $_.MainWindowTitle
-            ProcessName = $_.ProcessName
+        # Check if this window is on the current desktop
+        try {
+            $windowDesktop = Get-DesktopFromWindow -Hwnd $_.MainWindowHandle
+            if ($windowDesktop -and (Test-CurrentDesktop -Desktop $windowDesktop)) {
+                $windows += @{
+                    Process = $_
+                    Handle = $_.MainWindowHandle
+                    Title = $_.MainWindowTitle
+                    ProcessName = $_.ProcessName
+                }
+            }
+        }
+        catch {
+            # Window might not be on any desktop (pinned or special)
         }
     }
     return $windows
@@ -1809,17 +2001,23 @@ function Apply-TeamerDesktopTiling {
     .DESCRIPTION
         Uses the grid config from desktop and row/col from each window definition
         to position windows. Matches windows by process name or title.
+        First moves all matched windows to the target desktop, then applies tiling.
     .PARAMETER Desktop
         Desktop configuration object from environment
     .PARAMETER BaseWorkingDirectory
         Base working directory for the environment
+    .PARAMETER DesktopIndex
+        Target desktop index to move windows to
     #>
     param(
         [Parameter(Mandatory)]
         [object]$Desktop,
 
         [Parameter()]
-        [string]$BaseWorkingDirectory
+        [string]$BaseWorkingDirectory,
+
+        [Parameter()]
+        [int]$DesktopIndex = -1
     )
 
     $grid = $Desktop.grid
@@ -1828,8 +2026,25 @@ function Apply-TeamerDesktopTiling {
         return
     }
 
-    # Get all windows on current desktop
-    $desktopWindows = Get-DesktopWindows
+    # Get target desktop object if index provided
+    $targetDesktop = $null
+    if ($DesktopIndex -ge 0) {
+        $targetDesktop = Get-Desktop -Index $DesktopIndex
+    }
+
+    # Get ALL windows (not just current desktop) so we can find and move them
+    $allWindows = @()
+    Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | ForEach-Object {
+        $allWindows += @{
+            Process = $_
+            Handle = $_.MainWindowHandle
+            Title = $_.MainWindowTitle
+            ProcessName = $_.ProcessName
+        }
+    }
+
+    # Track which windows we've already matched (to avoid matching same window twice)
+    $usedHandles = @{}
 
     foreach ($window in $Desktop.windows) {
         # Skip windows without position info
@@ -1844,21 +2059,17 @@ function Apply-TeamerDesktopTiling {
 
         # Determine what to match based on window type
         $matchPattern = $null
-        $matchType = "process"
 
         switch ($window.type) {
             'terminal' {
-                # Match Windows Terminal
                 $matchPattern = "WindowsTerminal"
             }
             'app' {
-                # Extract process name from path (without .exe)
                 $appName = [System.IO.Path]::GetFileNameWithoutExtension($window.path)
-                $matchPattern = $appName
+                $matchPattern = "^$appName$"
             }
             'browser' {
-                # Common browser process names
-                $matchPattern = "chrome|firefox|msedge|brave"
+                $matchPattern = "^(chrome|firefox|msedge|brave)$"
             }
         }
 
@@ -1866,28 +2077,67 @@ function Apply-TeamerDesktopTiling {
             continue
         }
 
-        # Find matching window
+        # Find matching window that we haven't used yet
         $matchedWindow = $null
-        foreach ($win in $desktopWindows) {
-            if ($win.ProcessName -match $matchPattern) {
+        foreach ($win in $allWindows) {
+            if ($win.ProcessName -match $matchPattern -and -not $usedHandles.ContainsKey($win.Handle)) {
                 $matchedWindow = $win
+                $usedHandles[$win.Handle] = $true
                 break
             }
         }
 
         if ($matchedWindow) {
+            # First, move window to target desktop if specified
+            if ($targetDesktop) {
+                try {
+                    Move-Window -Desktop $targetDesktop -Hwnd $matchedWindow.Handle 2>$null | Out-Null
+                }
+                catch {
+                    # Window might already be on target desktop
+                }
+            }
+
+            # Calculate bounds and position window
             $bounds = Get-TeamerGridCellBounds -Grid $grid -Row $row -Col $col -RowSpan $rowSpan -ColSpan $colSpan
 
-            Write-Host "    $($matchedWindow.ProcessName) -> ($row,$col) span($rowSpan,$colSpan)" -ForegroundColor DarkGray
+            # Get invisible border offset for this window
+            # Windows 10/11 have invisible borders (~7px) that affect positioning
+            $frameOffset = Get-WindowFrameOffset -Handle $matchedWindow.Handle
 
+            # Adjust position to compensate for invisible borders
+            # We move the window frame left/up by the border amount so visible part is at target position
+            $adjustedX = $bounds.X - $frameOffset.Left
+            $adjustedY = $bounds.Y - $frameOffset.Top
+            # Width/height need to include the invisible borders
+            $adjustedWidth = $bounds.Width + $frameOffset.Left + $frameOffset.Right
+            $adjustedHeight = $bounds.Height + $frameOffset.Top + $frameOffset.Bottom
+
+            Write-Host "    $($matchedWindow.ProcessName) -> X=$($bounds.X) Y=$($bounds.Y) W=$($bounds.Width) H=$($bounds.Height) (adjusted: X=$adjustedX Y=$adjustedY W=$adjustedWidth H=$adjustedHeight)" -ForegroundColor DarkGray
+
+            # Use SetWindowPos for more reliable positioning
+            [Win32Window]::SetWindowPos(
+                $matchedWindow.Handle,
+                [IntPtr]::Zero,
+                $adjustedX,
+                $adjustedY,
+                $adjustedWidth,
+                $adjustedHeight,
+                [Win32Window]::SWP_NOZORDER -bor [Win32Window]::SWP_NOACTIVATE
+            ) | Out-Null
+
+            # Also use MoveWindow as backup
             [Win32Window]::MoveWindow(
                 $matchedWindow.Handle,
-                $bounds.X,
-                $bounds.Y,
-                $bounds.Width,
-                $bounds.Height,
+                $adjustedX,
+                $adjustedY,
+                $adjustedWidth,
+                $adjustedHeight,
                 $true
             ) | Out-Null
+        }
+        else {
+            Write-Host "    No window found for pattern: $matchPattern" -ForegroundColor Yellow
         }
     }
 }

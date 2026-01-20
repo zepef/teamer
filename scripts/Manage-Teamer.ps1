@@ -834,7 +834,7 @@ function Move-TeamerWindow {
             throw "Target desktop index $ToDesktop does not exist"
         }
 
-        Move-WindowToDesktop -Hwnd $Hwnd -Desktop $targetDesktop
+        Move-Window -Desktop $targetDesktop -Hwnd $Hwnd
 
         $title = [TeamerWin32]::GetWindowTitle([IntPtr]$Hwnd)
         $shortTitle = if ($title.Length -gt 30) { $title.Substring(0, 27) + "..." } else { $title }

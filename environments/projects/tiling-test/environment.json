@@ -1,0 +1,51 @@
+﻿{
+    "workingDirectory":  "E:\\Projects\\teamer",
+    "name":  "Tiling Test Environment",
+    "onStop":  [
+
+               ],
+    "desktops":  [
+                     {
+                         "name":  "Dev",
+                         "grid":  {
+                                      "margin":  2,
+                                      "cols":  2,
+                                      "rows":  2,
+                                      "gap":  2
+                                  },
+                         "windows":  [
+                                         {
+                                             "title":  "Ubuntu",
+                                             "profile":  "wsl-ubuntu",
+                                             "rowSpan":  2,
+                                             "row":  0,
+                                             "type":  "terminal",
+                                             "col":  0,
+                                             "colSpan":  1,
+                                             "tabColor":  "#E95420"
+                                         },
+                                         {
+                                             "row":  0,
+                                             "col":  1,
+                                             "path":  "excel.exe",
+                                             "type":  "app",
+                                             "colSpan":  1,
+                                             "rowSpan":  1
+                                         },
+                                         {
+                                             "row":  1,
+                                             "col":  1,
+                                             "path":  "notepad.exe",
+                                             "type":  "app",
+                                             "colSpan":  1,
+                                             "rowSpan":  1
+                                         }
+                                     ]
+                     }
+                 ],
+    "description":  "Testing environment-integrated tiling",
+    "onStart":  [
+
+                ],
+    "$schema":  "../schemas/environment.schema.json"
+}

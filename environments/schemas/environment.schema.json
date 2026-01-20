@@ -58,13 +58,13 @@
               "gap": {
                 "type": "integer",
                 "minimum": 0,
-                "default": 8,
+                "default": 2,
                 "description": "Gap between windows in pixels"
               },
               "margin": {
                 "type": "integer",
                 "minimum": 0,
-                "default": 8,
+                "default": 2,
                 "description": "Margin around the grid in pixels"
               }
             },

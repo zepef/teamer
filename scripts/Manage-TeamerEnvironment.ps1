@@ -142,8 +142,7 @@ foreach ($path in $script:RequiredPaths) {
     }
 }
 
-# Load saved state (active environments from previous sessions)
-Load-TeamerState
+# State loading is deferred until after all functions are defined (see end of script)
 
 #endregion
 
@@ -1212,6 +1211,13 @@ function Start-TeamerBrowser {
 
     Start-Process $Url
 }
+
+#endregion
+
+#region State Loading (deferred)
+
+# Load saved state now that all functions are defined
+Load-TeamerState
 
 #endregion
 

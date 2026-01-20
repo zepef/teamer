@@ -995,20 +995,35 @@ function Stop-TeamerEnvironment {
         }
     }
 
-    # Remove desktops in reverse order (highest index first)
-    # Use underlying Remove-Desktop to bypass session protection
-    # (these desktops were created by Teamer, so we trust they can be removed)
-    $sortedDesktops = $activeEnv.DesktopIndices | Sort-Object -Descending
-    foreach ($index in $sortedDesktops) {
-        Write-Host "Removing desktop $($index + 1)..." -ForegroundColor Yellow
-        try {
-            $desktop = Get-Desktop -Index $index
-            if ($desktop) {
-                Remove-Desktop -Desktop $desktop
+    # Remove desktops by NAME (more reliable than index which can shift)
+    # Build desktop names using the same logic as Start-TeamerEnvironment
+    $desktopCount = $config.desktops.Count
+    $desktopNames = @()
+    foreach ($desktopConfig in $config.desktops) {
+        $desktopName = if ($desktopCount -eq 1) {
+            $Name  # Environment name for single-desktop environments
+        }
+        else {
+            "$Name - $($desktopConfig.name)"  # "my-project - Code" for multi-desktop
+        }
+        $desktopNames += $desktopName
+    }
+
+    # Find and remove each desktop by name
+    $allDesktops = Get-DesktopList
+    foreach ($desktopName in $desktopNames) {
+        $desktop = $allDesktops | Where-Object { $_.Name -eq $desktopName }
+        if ($desktop) {
+            Write-Host "Removing desktop '$desktopName'..." -ForegroundColor Yellow
+            try {
+                Remove-Desktop -Desktop (Get-Desktop -Index $desktop.Number)
+            }
+            catch {
+                Write-Warning "Could not remove desktop '$desktopName': $_"
             }
         }
-        catch {
-            Write-Warning "Could not remove desktop $($index + 1): $_"
+        else {
+            Write-Host "Desktop '$desktopName' not found (may already be removed)" -ForegroundColor DarkGray
         }
     }
 

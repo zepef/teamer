@@ -1,0 +1,22 @@
+{
+  "$schema": "../schemas/layout.schema.json",
+  "name": "Triple Monitor Development",
+  "description": "Three monitor setup: code center, terminals left, services right",
+  "zones": [
+    {
+      "name": "code",
+      "monitor": "primary",
+      "arrangement": "maximized"
+    },
+    {
+      "name": "terminals",
+      "monitor": "secondary",
+      "arrangement": "tiled"
+    },
+    {
+      "name": "services",
+      "monitor": "tertiary",
+      "arrangement": "tiled"
+    }
+  ]
+}

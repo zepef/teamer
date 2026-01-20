@@ -1,0 +1,6 @@
+{
+  "name": "Render",
+  "description": "Render dashboard for monitoring deployments",
+  "dashboard": "https://dashboard.render.com",
+  "cliCommands": {}
+}

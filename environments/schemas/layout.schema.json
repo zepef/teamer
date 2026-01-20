@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teamer.local/schemas/layout.schema.json",
+  "title": "Teamer Layout Configuration",
+  "description": "Schema for multi-monitor window arrangement layouts",
+  "type": "object",
+  "required": ["name", "zones"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Human-readable layout name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Description of this layout's purpose"
+    },
+    "zones": {
+      "type": "array",
+      "description": "Named zones for window placement",
+      "items": {
+        "type": "object",
+        "required": ["name", "monitor", "arrangement"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Zone identifier (referenced in environment configs)"
+          },
+          "monitor": {
+            "type": "string",
+            "enum": ["primary", "secondary", "tertiary", "any"],
+            "description": "Which monitor this zone targets"
+          },
+          "arrangement": {
+            "type": "string",
+            "enum": ["maximized", "tiled", "floating", "left-half", "right-half", "top-half", "bottom-half"],
+            "description": "How windows in this zone should be arranged"
+          },
+          "defaultSize": {
+            "type": "object",
+            "properties": {
+              "width": { "type": "integer" },
+              "height": { "type": "integer" }
+            },
+            "description": "Default size for floating windows"
+          },
+          "position": {
+            "type": "object",
+            "properties": {
+              "x": { "type": "integer" },
+              "y": { "type": "integer" }
+            },
+            "description": "Default position for floating windows"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Sentry",
+  "description": "Sentry error tracking and monitoring",
+  "dashboard": "https://sentry.io",
+  "cliCommands": {}
+}

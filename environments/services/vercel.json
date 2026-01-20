@@ -1,0 +1,10 @@
+{
+  "name": "Vercel",
+  "description": "Vercel deployment dashboard and CLI",
+  "dashboard": "https://vercel.com/dashboard",
+  "cliCommands": {
+    "logs": "vercel logs --follow",
+    "deploy": "vercel",
+    "deployProd": "vercel --prod"
+  }
+}

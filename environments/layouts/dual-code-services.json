@@ -1,0 +1,23 @@
+{
+  "$schema": "../schemas/layout.schema.json",
+  "name": "Dual Monitor - Code & Services",
+  "description": "Primary monitor for coding (maximized), secondary for dashboards (tiled)",
+  "zones": [
+    {
+      "name": "main",
+      "monitor": "primary",
+      "arrangement": "maximized"
+    },
+    {
+      "name": "secondary",
+      "monitor": "secondary",
+      "arrangement": "tiled"
+    },
+    {
+      "name": "floating",
+      "monitor": "any",
+      "arrangement": "floating",
+      "defaultSize": { "width": 800, "height": 600 }
+    }
+  ]
+}

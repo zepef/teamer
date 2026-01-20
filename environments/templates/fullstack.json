@@ -1,0 +1,49 @@
+{
+  "$schema": "../schemas/environment.schema.json",
+  "name": "Full-Stack Development",
+  "description": "Full-stack template with separate code and services desktops",
+  "layout": "dual-code-services",
+  "desktops": [
+    {
+      "name": "Code",
+      "windows": [
+        {
+          "type": "terminal",
+          "profile": "wsl-ubuntu",
+          "zone": "main",
+          "cwd": "."
+        },
+        {
+          "type": "terminal",
+          "profile": "powershell",
+          "zone": "main",
+          "command": "npm run dev"
+        },
+        {
+          "type": "app",
+          "path": "code",
+          "zone": "main",
+          "args": ["."]
+        }
+      ]
+    },
+    {
+      "name": "Services",
+      "windows": [
+        {
+          "type": "browser",
+          "url": "http://localhost:3000",
+          "zone": "secondary"
+        },
+        {
+          "type": "terminal",
+          "profile": "powershell",
+          "zone": "secondary",
+          "command": "npm run logs"
+        }
+      ]
+    }
+  ],
+  "onStart": ["npm install"],
+  "onStop": []
+}

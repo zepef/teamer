@@ -1,0 +1,8 @@
+{
+  "$schema": "../schemas/profile.schema.json",
+  "name": "PowerShell Core",
+  "shell": "pwsh",
+  "terminalProfile": "PowerShell",
+  "startupCommands": [],
+  "environment": {}
+}

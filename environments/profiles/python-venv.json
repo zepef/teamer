@@ -1,0 +1,12 @@
+{
+  "$schema": "../schemas/profile.schema.json",
+  "name": "Python Virtual Environment",
+  "shell": "powershell",
+  "terminalProfile": "Windows PowerShell",
+  "startupCommands": [
+    ".\\venv\\Scripts\\Activate.ps1"
+  ],
+  "environment": {
+    "PYTHONDONTWRITEBYTECODE": "1"
+  }
+}

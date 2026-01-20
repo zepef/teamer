@@ -1,0 +1,14 @@
+{
+  "$schema": "../schemas/profile.schema.json",
+  "name": "WSL Ubuntu",
+  "shell": "wsl",
+  "distribution": "Ubuntu",
+  "terminalProfile": "Ubuntu",
+  "startupCommands": [
+    "cd ~",
+    "source ~/.bashrc"
+  ],
+  "environment": {
+    "NODE_ENV": "development"
+  }
+}

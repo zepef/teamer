@@ -1,0 +1,45 @@
+{
+  "$schema": "../schemas/environment.schema.json",
+  "name": "Data Science",
+  "description": "ML/data science template with Jupyter and Python environment",
+  "layout": "dual-code-services",
+  "desktops": [
+    {
+      "name": "Analysis",
+      "windows": [
+        {
+          "type": "terminal",
+          "profile": "python-venv",
+          "zone": "main",
+          "cwd": "."
+        },
+        {
+          "type": "browser",
+          "url": "http://localhost:8888",
+          "zone": "main"
+        }
+      ]
+    },
+    {
+      "name": "Notebooks",
+      "windows": [
+        {
+          "type": "terminal",
+          "profile": "python-venv",
+          "zone": "secondary",
+          "command": "jupyter notebook"
+        },
+        {
+          "type": "app",
+          "path": "code",
+          "zone": "secondary",
+          "args": ["."]
+        }
+      ]
+    }
+  ],
+  "onStart": [
+    "pip install -r requirements.txt"
+  ],
+  "onStop": []
+}

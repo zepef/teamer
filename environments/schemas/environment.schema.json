@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teamer.local/schemas/environment.schema.json",
+  "title": "Teamer Environment Configuration",
+  "description": "Schema for project-specific environment configurations",
+  "type": "object",
+  "required": ["name", "desktops"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Human-readable name for the environment"
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional description of the environment purpose"
+    },
+    "workingDirectory": {
+      "type": "string",
+      "description": "Base working directory for the project"
+    },
+    "layout": {
+      "type": "string",
+      "description": "Reference to a layout file name (without .json extension)"
+    },
+    "desktops": {
+      "type": "array",
+      "description": "List of virtual desktops to create",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name for the virtual desktop"
+          },
+          "windows": {
+            "type": "array",
+            "description": "Windows to open on this desktop",
+            "items": {
+              "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": ["terminal", "app", "browser"],
+                  "description": "Type of window to open"
+                },
+                "profile": {
+                  "type": "string",
+                  "description": "Profile name for terminal windows"
+                },
+                "path": {
+                  "type": "string",
+                  "description": "Executable path for app windows"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "URL for browser windows"
+                },
+                "zone": {
+                  "type": "string",
+                  "description": "Layout zone to place the window in"
+                },
+                "cwd": {
+                  "type": "string",
+                  "description": "Working directory (relative to workingDirectory or absolute)"
+                },
+                "command": {
+                  "type": "string",
+                  "description": "Command to run in the terminal"
+                },
+                "args": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Arguments for app windows"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "Custom title for terminal tab (overrides profile)"
+                },
+                "tabColor": {
+                  "type": "string",
+                  "pattern": "^#[0-9A-Fa-f]{6}$",
+                  "description": "Tab color in hex format (overrides profile)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "onStart": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Commands to run when starting the environment"
+    },
+    "onStop": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Commands to run when stopping the environment"
+    }
+  }
+}

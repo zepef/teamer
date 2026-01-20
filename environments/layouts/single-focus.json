@@ -1,0 +1,12 @@
+{
+  "$schema": "../schemas/layout.schema.json",
+  "name": "Single Monitor Focus",
+  "description": "Everything maximized on one monitor - ideal for focused work on a single screen",
+  "zones": [
+    {
+      "name": "main",
+      "monitor": "primary",
+      "arrangement": "maximized"
+    }
+  ]
+}

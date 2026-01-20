@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teamer.local/schemas/profile.schema.json",
+  "title": "Teamer Shell Profile",
+  "description": "Schema for terminal/shell profile configurations",
+  "type": "object",
+  "required": ["name", "shell"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Human-readable profile name"
+    },
+    "shell": {
+      "type": "string",
+      "enum": ["powershell", "pwsh", "wsl", "cmd", "git-bash"],
+      "description": "Shell type to launch"
+    },
+    "distribution": {
+      "type": "string",
+      "description": "WSL distribution name (for wsl shell type)"
+    },
+    "terminalProfile": {
+      "type": "string",
+      "description": "Windows Terminal profile name to use"
+    },
+    "startupCommands": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Commands to run after shell starts"
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Environment variables to set"
+    },
+    "workingDirectory": {
+      "type": "string",
+      "description": "Default working directory for this profile"
+    },
+    "title": {
+      "type": "string",
+      "description": "Custom title for the terminal tab/window"
+    },
+    "tabColor": {
+      "type": "string",
+      "pattern": "^#[0-9A-Fa-f]{6}$",
+      "description": "Tab color in hex format (e.g., #FF5733)"
+    }
+  }
+}

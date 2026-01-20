@@ -1,0 +1,17 @@
+{
+  "$schema": "../schemas/layout.schema.json",
+  "name": "Dual Monitor - Wide Layout",
+  "description": "Both monitors maximized - good for full-screen apps on each display",
+  "zones": [
+    {
+      "name": "left",
+      "monitor": "primary",
+      "arrangement": "maximized"
+    },
+    {
+      "name": "right",
+      "monitor": "secondary",
+      "arrangement": "maximized"
+    }
+  ]
+}

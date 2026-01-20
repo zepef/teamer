@@ -1,0 +1,12 @@
+{
+  "$schema": "../schemas/profile.schema.json",
+  "name": "Node.js 18 Environment",
+  "shell": "powershell",
+  "terminalProfile": "Windows PowerShell",
+  "startupCommands": [
+    "nvm use 18"
+  ],
+  "environment": {
+    "NODE_ENV": "development"
+  }
+}

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://teamer.local/schemas/layout.schema.json",
   "title": "Teamer Layout Configuration",
-  "description": "Schema for multi-monitor window arrangement layouts",
+  "description": "Schema for multi-monitor window arrangement layouts with grid support",
   "type": "object",
   "required": ["name", "zones"],
   "properties": {
@@ -14,12 +14,43 @@
       "type": "string",
       "description": "Description of this layout's purpose"
     },
+    "grid": {
+      "type": "object",
+      "description": "Grid configuration for the layout (optional, enables grid-based positioning)",
+      "properties": {
+        "rows": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12,
+          "description": "Number of rows in the grid"
+        },
+        "cols": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12,
+          "description": "Number of columns in the grid"
+        },
+        "gap": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Gap between grid cells in pixels"
+        },
+        "margin": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Margin around the entire grid in pixels"
+        }
+      },
+      "required": ["rows", "cols"]
+    },
     "zones": {
       "type": "array",
       "description": "Named zones for window placement",
       "items": {
         "type": "object",
-        "required": ["name", "monitor", "arrangement"],
+        "required": ["name"],
         "properties": {
           "name": {
             "type": "string",
@@ -32,8 +63,30 @@
           },
           "arrangement": {
             "type": "string",
-            "enum": ["maximized", "tiled", "floating", "left-half", "right-half", "top-half", "bottom-half"],
+            "enum": ["maximized", "tiled", "floating", "left-half", "right-half", "top-half", "bottom-half", "grid"],
             "description": "How windows in this zone should be arranged"
+          },
+          "row": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Starting row in the grid (0-indexed)"
+          },
+          "col": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Starting column in the grid (0-indexed)"
+          },
+          "rowSpan": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 1,
+            "description": "Number of rows this zone spans"
+          },
+          "colSpan": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 1,
+            "description": "Number of columns this zone spans"
           },
           "defaultSize": {
             "type": "object",

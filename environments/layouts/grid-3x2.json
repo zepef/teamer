@@ -1,0 +1,49 @@
+{
+  "$schema": "../schemas/layout.schema.json",
+  "name": "3x2 Grid Layout",
+  "description": "A 3-row by 2-column grid for organizing windows",
+  "grid": {
+    "rows": 3,
+    "cols": 2,
+    "gap": 8,
+    "margin": 8
+  },
+  "zones": [
+    {
+      "name": "main",
+      "row": 0,
+      "col": 0,
+      "rowSpan": 2,
+      "colSpan": 1,
+      "monitor": "primary",
+      "arrangement": "grid"
+    },
+    {
+      "name": "sidebar-top",
+      "row": 0,
+      "col": 1,
+      "rowSpan": 1,
+      "colSpan": 1,
+      "monitor": "primary",
+      "arrangement": "grid"
+    },
+    {
+      "name": "sidebar-bottom",
+      "row": 1,
+      "col": 1,
+      "rowSpan": 1,
+      "colSpan": 1,
+      "monitor": "primary",
+      "arrangement": "grid"
+    },
+    {
+      "name": "footer",
+      "row": 2,
+      "col": 0,
+      "rowSpan": 1,
+      "colSpan": 2,
+      "monitor": "primary",
+      "arrangement": "grid"
+    }
+  ]
+}

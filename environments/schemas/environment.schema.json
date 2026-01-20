@@ -82,6 +82,32 @@
                   "type": "string",
                   "pattern": "^#[0-9A-Fa-f]{6}$",
                   "description": "Tab color in hex format (overrides profile)"
+                },
+                "tabGroup": {
+                  "type": "string",
+                  "description": "Group ID for terminal tabs. Terminals with same tabGroup open as tabs in one window."
+                },
+                "row": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Grid row position (0-indexed, overrides zone)"
+                },
+                "col": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Grid column position (0-indexed, overrides zone)"
+                },
+                "rowSpan": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "default": 1,
+                  "description": "Number of grid rows this window spans"
+                },
+                "colSpan": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "default": 1,
+                  "description": "Number of grid columns this window spans"
                 }
               }
             }

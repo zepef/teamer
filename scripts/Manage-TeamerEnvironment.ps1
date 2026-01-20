@@ -828,9 +828,45 @@ function Start-TeamerEnvironment {
         Switch-TeamerDesktop -Index $desktopIndex | Out-Null
         Start-Sleep -Milliseconds 500
 
-        # Launch windows on this desktop
+        # Load layout for grid positioning
+        $layout = $null
+        $grid = $null
+        if ($config.layout) {
+            $layout = Get-TeamerLayout -Name $config.layout
+            if ($layout -and $layout.grid) {
+                $grid = $layout.grid
+            }
+        }
+
+        # Group terminals by tabGroup
+        $terminalGroups = @{}
+        $ungroupedWindows = @()
+
         foreach ($window in $desktop.windows) {
-            $workDir = if ($config.workingDirectory) { $config.workingDirectory } else { $PWD }
+            if ($window.type -eq 'terminal' -and $window.tabGroup) {
+                if (-not $terminalGroups.ContainsKey($window.tabGroup)) {
+                    $terminalGroups[$window.tabGroup] = @()
+                }
+                $terminalGroups[$window.tabGroup] += $window
+            }
+            else {
+                $ungroupedWindows += $window
+            }
+        }
+
+        $baseWorkDir = if ($config.workingDirectory) { $config.workingDirectory } else { $PWD }
+
+        # Launch terminal tab groups
+        foreach ($groupName in $terminalGroups.Keys) {
+            $terminals = $terminalGroups[$groupName]
+            Write-Host "  Launching terminal group '$groupName' ($($terminals.Count) tabs)" -ForegroundColor DarkGray
+            Start-TeamerTerminalTabGroup -DesktopIndex $desktopIndex -Terminals $terminals -BaseWorkingDirectory $baseWorkDir
+            Start-Sleep -Milliseconds 500
+        }
+
+        # Launch ungrouped windows
+        foreach ($window in $ungroupedWindows) {
+            $workDir = $baseWorkDir
 
             # Resolve relative cwd
             if ($window.cwd -and $window.cwd -ne ".") {
@@ -838,7 +874,7 @@ function Start-TeamerEnvironment {
                     $window.cwd
                 }
                 else {
-                    Join-Path $workDir $window.cwd
+                    Join-Path $baseWorkDir $window.cwd
                 }
             }
 
@@ -849,8 +885,8 @@ function Start-TeamerEnvironment {
                 }
                 'app' {
                     Write-Host "  Launching app: $($window.path)" -ForegroundColor DarkGray
-                    $args = if ($window.args) { $window.args } else { @() }
-                    Start-TeamerApp -DesktopIndex $desktopIndex -Path $window.path -Arguments $args -WorkingDirectory $workDir
+                    $appArgs = if ($window.args) { $window.args } else { @() }
+                    Start-TeamerApp -DesktopIndex $desktopIndex -Path $window.path -Arguments $appArgs -WorkingDirectory $workDir
                 }
                 'browser' {
                     Write-Host "  Opening browser: $($window.url)" -ForegroundColor DarkGray
@@ -1088,6 +1124,9 @@ function Start-TeamerTerminalFromProfile {
     <#
     .SYNOPSIS
         Launches a terminal using a profile configuration
+    .DESCRIPTION
+        Supports different shell types: powershell, pwsh, wsl, cmd, git-bash
+        For WSL, properly invokes wsl.exe with the specified distribution.
     #>
     param(
         [Parameter(Mandatory)]
@@ -1116,17 +1155,8 @@ function Start-TeamerTerminalFromProfile {
         return
     }
 
-    # Use Windows Terminal with specific profile
-    $terminalProfile = $profile.terminalProfile
-
     # Build Windows Terminal arguments
-    $wtArgs = @("-p", "`"$terminalProfile`"")
-
-    # Add working directory
-    if ($WorkingDirectory -and (Test-Path $WorkingDirectory)) {
-        $wtArgs += "-d"
-        $wtArgs += "`"$WorkingDirectory`""
-    }
+    $wtArgs = @()
 
     # Add title (window override > profile)
     $effectiveTitle = if ($Title) { $Title } elseif ($profile.title) { $profile.title } else { $null }
@@ -1142,21 +1172,92 @@ function Start-TeamerTerminalFromProfile {
         $wtArgs += "`"$effectiveColor`""
     }
 
-    # Build the command to run
-    $cmdParts = @()
+    # Handle different shell types
+    $shell = $profile.shell
+    switch ($shell) {
+        'wsl' {
+            # For WSL, we need to use wsl.exe with distribution
+            $distribution = if ($profile.distribution) { $profile.distribution } else { "Ubuntu" }
 
-    # Add startup commands from profile
-    if ($profile.startupCommands -and $profile.startupCommands.Count -gt 0) {
-        $cmdParts += $profile.startupCommands
-    }
+            # Convert Windows path to WSL path if needed
+            $wslWorkDir = $null
+            if ($WorkingDirectory -and (Test-Path $WorkingDirectory)) {
+                # Convert E:\Projects\foo to /mnt/e/Projects/foo
+                $wslWorkDir = $WorkingDirectory -replace '^([A-Za-z]):', { '/mnt/' + $_.Groups[1].Value.ToLower() }
+                $wslWorkDir = $wslWorkDir -replace '\\', '/'
+            }
 
-    # Add custom command
-    if ($Command) {
-        $cmdParts += $Command
+            # Build the WSL command
+            $wslCmd = "wsl.exe -d $distribution"
+
+            # Add startup commands and custom command
+            $cmdParts = @()
+            if ($wslWorkDir) {
+                $cmdParts += "cd '$wslWorkDir'"
+            }
+            if ($profile.startupCommands -and $profile.startupCommands.Count -gt 0) {
+                $cmdParts += $profile.startupCommands
+            }
+            if ($Command) {
+                $cmdParts += $Command
+            }
+
+            # If there are commands, wrap them in bash -c
+            if ($cmdParts.Count -gt 0) {
+                $bashCmd = $cmdParts -join ' && '
+                # Escape for Windows command line
+                $bashCmd = $bashCmd -replace '"', '\"'
+                $wslCmd += " -- bash -c `"$bashCmd; exec bash`""
+            }
+
+            $wtArgs += $wslCmd
+        }
+        'pwsh' {
+            # PowerShell Core
+            $wtArgs += "-p"
+            $wtArgs += "`"PowerShell`""
+
+            if ($WorkingDirectory -and (Test-Path $WorkingDirectory)) {
+                $wtArgs += "-d"
+                $wtArgs += "`"$WorkingDirectory`""
+            }
+        }
+        'cmd' {
+            # Command Prompt
+            $wtArgs += "-p"
+            $wtArgs += "`"Command Prompt`""
+
+            if ($WorkingDirectory -and (Test-Path $WorkingDirectory)) {
+                $wtArgs += "-d"
+                $wtArgs += "`"$WorkingDirectory`""
+            }
+        }
+        'git-bash' {
+            # Git Bash
+            $wtArgs += "-p"
+            $wtArgs += "`"Git Bash`""
+
+            if ($WorkingDirectory -and (Test-Path $WorkingDirectory)) {
+                $wtArgs += "-d"
+                $wtArgs += "`"$WorkingDirectory`""
+            }
+        }
+        default {
+            # PowerShell (Windows PowerShell)
+            $wtArgs += "-p"
+            $wtArgs += "`"Windows PowerShell`""
+
+            if ($WorkingDirectory -and (Test-Path $WorkingDirectory)) {
+                $wtArgs += "-d"
+                $wtArgs += "`"$WorkingDirectory`""
+            }
+        }
     }
 
     # Launch terminal
-    Start-Process -FilePath "wt.exe" -ArgumentList ($wtArgs -join " ")
+    $argString = $wtArgs -join " "
+    Write-Host "    wt.exe $argString" -ForegroundColor DarkGray
+    Start-Process -FilePath "wt.exe" -ArgumentList $argString
 }
 
 function Start-TeamerApp {
@@ -1210,6 +1311,289 @@ function Start-TeamerBrowser {
     )
 
     Start-Process $Url
+}
+
+function Start-TeamerTerminalTabGroup {
+    <#
+    .SYNOPSIS
+        Launches multiple terminals as tabs in a single Windows Terminal window
+    .DESCRIPTION
+        Takes an array of terminal configurations and launches them all in one window.
+        Each terminal becomes a tab. Supports different profiles, titles, and colors per tab.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [int]$DesktopIndex,
+
+        [Parameter(Mandatory)]
+        [array]$Terminals,
+
+        [Parameter()]
+        [string]$BaseWorkingDirectory
+    )
+
+    if ($Terminals.Count -eq 0) {
+        return
+    }
+
+    # Build Windows Terminal command with multiple tabs
+    # Format: wt [options] ; new-tab [options] ; new-tab [options]
+    $wtParts = @()
+
+    $isFirst = $true
+    foreach ($term in $Terminals) {
+        $tabArgs = @()
+
+        # Get the profile config
+        $profileConfig = Get-TeamerProfile -Name $term.profile
+        $shell = if ($profileConfig) { $profileConfig.shell } else { "powershell" }
+
+        # Resolve working directory
+        $workDir = $BaseWorkingDirectory
+        if ($term.cwd -and $term.cwd -ne ".") {
+            $workDir = if ([System.IO.Path]::IsPathRooted($term.cwd)) {
+                $term.cwd
+            }
+            else {
+                Join-Path $BaseWorkingDirectory $term.cwd
+            }
+        }
+
+        # Add title
+        $effectiveTitle = if ($term.title) { $term.title } elseif ($profileConfig -and $profileConfig.title) { $profileConfig.title } else { $null }
+        if ($effectiveTitle) {
+            $tabArgs += "--title"
+            $tabArgs += "`"$effectiveTitle`""
+        }
+
+        # Add tab color
+        $effectiveColor = if ($term.tabColor) { $term.tabColor } elseif ($profileConfig -and $profileConfig.tabColor) { $profileConfig.tabColor } else { $null }
+        if ($effectiveColor) {
+            $tabArgs += "--tabColor"
+            $tabArgs += "`"$effectiveColor`""
+        }
+
+        # Handle shell type
+        switch ($shell) {
+            'wsl' {
+                $distribution = if ($profileConfig -and $profileConfig.distribution) { $profileConfig.distribution } else { "Ubuntu" }
+
+                # Convert Windows path to WSL path
+                $wslWorkDir = $null
+                if ($workDir -and (Test-Path $workDir)) {
+                    $wslWorkDir = $workDir -replace '^([A-Za-z]):', { '/mnt/' + $_.Groups[1].Value.ToLower() }
+                    $wslWorkDir = $wslWorkDir -replace '\\', '/'
+                }
+
+                $wslCmd = "wsl.exe -d $distribution"
+                $cmdParts = @()
+                if ($wslWorkDir) {
+                    $cmdParts += "cd '$wslWorkDir'"
+                }
+                if ($profileConfig -and $profileConfig.startupCommands) {
+                    $cmdParts += $profileConfig.startupCommands
+                }
+                if ($term.command) {
+                    $cmdParts += $term.command
+                }
+
+                if ($cmdParts.Count -gt 0) {
+                    $bashCmd = $cmdParts -join ' && '
+                    $bashCmd = $bashCmd -replace '"', '\"'
+                    $wslCmd += " -- bash -c `"$bashCmd; exec bash`""
+                }
+
+                $tabArgs += $wslCmd
+            }
+            'pwsh' {
+                $tabArgs += "-p"
+                $tabArgs += "`"PowerShell`""
+                if ($workDir -and (Test-Path $workDir)) {
+                    $tabArgs += "-d"
+                    $tabArgs += "`"$workDir`""
+                }
+            }
+            'cmd' {
+                $tabArgs += "-p"
+                $tabArgs += "`"Command Prompt`""
+                if ($workDir -and (Test-Path $workDir)) {
+                    $tabArgs += "-d"
+                    $tabArgs += "`"$workDir`""
+                }
+            }
+            default {
+                $tabArgs += "-p"
+                $tabArgs += "`"Windows PowerShell`""
+                if ($workDir -and (Test-Path $workDir)) {
+                    $tabArgs += "-d"
+                    $tabArgs += "`"$workDir`""
+                }
+            }
+        }
+
+        if ($isFirst) {
+            $wtParts += ($tabArgs -join " ")
+            $isFirst = $false
+        }
+        else {
+            $wtParts += "`; new-tab " + ($tabArgs -join " ")
+        }
+    }
+
+    $argString = $wtParts -join " "
+    Write-Host "    wt.exe $argString" -ForegroundColor DarkGray
+    Start-Process -FilePath "wt.exe" -ArgumentList $argString
+}
+
+#endregion
+
+#region Grid and Window Positioning
+
+# Load Win32 API for window positioning
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+
+public class Win32Window {
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_NOZORDER = 0x0004;
+}
+"@ -ErrorAction SilentlyContinue
+
+function Get-TeamerScreenBounds {
+    <#
+    .SYNOPSIS
+        Gets the bounds of the primary screen
+    #>
+    Add-Type -AssemblyName System.Windows.Forms
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+    return @{
+        X = $screen.WorkingArea.X
+        Y = $screen.WorkingArea.Y
+        Width = $screen.WorkingArea.Width
+        Height = $screen.WorkingArea.Height
+    }
+}
+
+function Get-TeamerGridCellBounds {
+    <#
+    .SYNOPSIS
+        Calculates the pixel bounds for a grid cell position
+    .PARAMETER Grid
+        Grid configuration with rows, cols, gap, margin
+    .PARAMETER Row
+        Starting row (0-indexed)
+    .PARAMETER Col
+        Starting column (0-indexed)
+    .PARAMETER RowSpan
+        Number of rows to span
+    .PARAMETER ColSpan
+        Number of columns to span
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [object]$Grid,
+
+        [Parameter(Mandatory)]
+        [int]$Row,
+
+        [Parameter(Mandatory)]
+        [int]$Col,
+
+        [Parameter()]
+        [int]$RowSpan = 1,
+
+        [Parameter()]
+        [int]$ColSpan = 1
+    )
+
+    $screen = Get-TeamerScreenBounds
+
+    $rows = $Grid.rows
+    $cols = $Grid.cols
+    $gap = if ($Grid.gap) { $Grid.gap } else { 0 }
+    $margin = if ($Grid.margin) { $Grid.margin } else { 0 }
+
+    # Calculate available space
+    $availableWidth = $screen.Width - (2 * $margin) - (($cols - 1) * $gap)
+    $availableHeight = $screen.Height - (2 * $margin) - (($rows - 1) * $gap)
+
+    # Calculate cell size
+    $cellWidth = [math]::Floor($availableWidth / $cols)
+    $cellHeight = [math]::Floor($availableHeight / $rows)
+
+    # Calculate position
+    $x = $screen.X + $margin + ($Col * ($cellWidth + $gap))
+    $y = $screen.Y + $margin + ($Row * ($cellHeight + $gap))
+
+    # Calculate size with spans
+    $width = ($cellWidth * $ColSpan) + (($ColSpan - 1) * $gap)
+    $height = ($cellHeight * $RowSpan) + (($RowSpan - 1) * $gap)
+
+    return @{
+        X = $x
+        Y = $y
+        Width = $width
+        Height = $height
+    }
+}
+
+function Move-TeamerWindow {
+    <#
+    .SYNOPSIS
+        Moves and resizes a window by its process handle
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [System.Diagnostics.Process]$Process,
+
+        [Parameter(Mandatory)]
+        [int]$X,
+
+        [Parameter(Mandatory)]
+        [int]$Y,
+
+        [Parameter(Mandatory)]
+        [int]$Width,
+
+        [Parameter(Mandatory)]
+        [int]$Height
+    )
+
+    # Wait for window handle
+    $attempts = 0
+    while ($Process.MainWindowHandle -eq [IntPtr]::Zero -and $attempts -lt 20) {
+        Start-Sleep -Milliseconds 100
+        $Process.Refresh()
+        $attempts++
+    }
+
+    if ($Process.MainWindowHandle -ne [IntPtr]::Zero) {
+        [Win32Window]::MoveWindow($Process.MainWindowHandle, $X, $Y, $Width, $Height, $true) | Out-Null
+        return $true
+    }
+
+    return $false
 }
 
 #endregion

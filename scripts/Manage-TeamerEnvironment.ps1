@@ -1010,13 +1010,62 @@ function Stop-TeamerEnvironment {
     }
 
     # Find and remove each desktop by name
+    # IMPORTANT: Close windows BEFORE removing desktop to prevent them from moving to active desktop
     $allDesktops = Get-DesktopList
     foreach ($desktopName in $desktopNames) {
         $desktop = $allDesktops | Where-Object { $_.Name -eq $desktopName }
         if ($desktop) {
+            $desktopIndex = $desktop.Number
+
+            # Switch to target desktop first
+            Write-Host "Switching to desktop '$desktopName' to close windows..." -ForegroundColor DarkGray
+            try {
+                Switch-TeamerDesktop -Index $desktopIndex | Out-Null
+                Start-Sleep -Milliseconds 300
+            }
+            catch {
+                Write-Warning "Could not switch to desktop: $_"
+            }
+
+            # Get all windows on this desktop and close them
+            Write-Host "Closing windows on '$desktopName'..." -ForegroundColor Yellow
+            $targetDesktop = Get-Desktop -Index $desktopIndex
+            $windowsOnDesktop = Get-Process | Where-Object {
+                $_.MainWindowHandle -ne [IntPtr]::Zero
+            } | ForEach-Object {
+                $proc = $_
+                try {
+                    $windowDesktop = Get-DesktopFromWindow -Hwnd $proc.MainWindowHandle
+                    if ($windowDesktop -and (Get-DesktopIndex -Desktop $windowDesktop) -eq $desktopIndex) {
+                        $proc
+                    }
+                }
+                catch {
+                    # Window might not be on any desktop or already closed
+                }
+            }
+
+            foreach ($proc in $windowsOnDesktop) {
+                if ($proc) {
+                    Write-Host "  Closing: $($proc.ProcessName)" -ForegroundColor DarkGray
+                    try {
+                        $proc.CloseMainWindow() | Out-Null
+                        # Give window time to close gracefully
+                        Start-Sleep -Milliseconds 200
+                    }
+                    catch {
+                        Write-Warning "Could not close $($proc.ProcessName): $_"
+                    }
+                }
+            }
+
+            # Small delay to ensure windows are closed
+            Start-Sleep -Milliseconds 500
+
+            # Now remove the desktop
             Write-Host "Removing desktop '$desktopName'..." -ForegroundColor Yellow
             try {
-                Remove-Desktop -Desktop (Get-Desktop -Index $desktop.Number)
+                Remove-Desktop -Desktop (Get-Desktop -Index $desktopIndex)
             }
             catch {
                 Write-Warning "Could not remove desktop '$desktopName': $_"

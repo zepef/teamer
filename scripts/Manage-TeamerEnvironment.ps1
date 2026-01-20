@@ -1120,6 +1120,34 @@ function Remove-TeamerEnvironment {
 
 #region Window Launch Helpers
 
+function Convert-ToWslPath {
+    <#
+    .SYNOPSIS
+        Converts a Windows path to a WSL mount path
+    .EXAMPLE
+        Convert-ToWslPath "E:\Projects\teamer"
+        Returns: /mnt/e/Projects/teamer
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$WindowsPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($WindowsPath)) {
+        return $null
+    }
+
+    # Extract drive letter and convert to lowercase
+    if ($WindowsPath -match '^([A-Za-z]):(.*)$') {
+        $driveLetter = $Matches[1].ToLower()
+        $restOfPath = $Matches[2] -replace '\\', '/'
+        return "/mnt/$driveLetter$restOfPath"
+    }
+
+    # If no drive letter, just convert backslashes
+    return $WindowsPath -replace '\\', '/'
+}
+
 function Start-TeamerTerminalFromProfile {
     <#
     .SYNOPSIS
@@ -1182,9 +1210,7 @@ function Start-TeamerTerminalFromProfile {
             # Convert Windows path to WSL path if needed
             $wslWorkDir = $null
             if ($WorkingDirectory -and (Test-Path $WorkingDirectory)) {
-                # Convert E:\Projects\foo to /mnt/e/Projects/foo
-                $wslWorkDir = $WorkingDirectory -replace '^([A-Za-z]):', { '/mnt/' + $_.Groups[1].Value.ToLower() }
-                $wslWorkDir = $wslWorkDir -replace '\\', '/'
+                $wslWorkDir = Convert-ToWslPath $WorkingDirectory
             }
 
             # Build the WSL command
@@ -1381,8 +1407,7 @@ function Start-TeamerTerminalTabGroup {
                 # Convert Windows path to WSL path
                 $wslWorkDir = $null
                 if ($workDir -and (Test-Path $workDir)) {
-                    $wslWorkDir = $workDir -replace '^([A-Za-z]):', { '/mnt/' + $_.Groups[1].Value.ToLower() }
-                    $wslWorkDir = $wslWorkDir -replace '\\', '/'
+                    $wslWorkDir = Convert-ToWslPath $workDir
                 }
 
                 $wslCmd = "wsl.exe -d $distribution"

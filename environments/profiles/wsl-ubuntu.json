@@ -2,7 +2,7 @@
   "$schema": "../schemas/profile.schema.json",
   "name": "WSL Ubuntu",
   "shell": "wsl",
-  "distribution": "Ubuntu",
+  "distribution": "Ubuntu-24.04",
   "terminalProfile": "Ubuntu",
   "startupCommands": [
     "cd ~",

@@ -15,9 +15,20 @@
 
 #region Constants
 
-# Dynamic protection: set after module init to current desktop count
-$script:PROTECTED_DESKTOP_COUNT = 0  # Will be set during initialization
 $script:PROJECT_ROOT = "E:\Projects\teamer"
+
+# Protected desktops by NAME (more reliable than index which can shift)
+# These desktops cannot be removed or have windows closed by Teamer
+$script:PROTECTED_DESKTOP_NAMES = @(
+    "Main",
+    "Code",
+    "Desktop 1",
+    "Desktop 2",
+    "Desktop 3"
+)
+
+# Legacy: count-based protection (kept for backward compatibility)
+$script:PROTECTED_DESKTOP_COUNT = 0  # Will be set during initialization
 
 #endregion
 
@@ -222,16 +233,39 @@ $script:PROTECTED_DESKTOP_COUNT = Get-DesktopCount
 function Test-DesktopProtected {
     <#
     .SYNOPSIS
-        Checks if a desktop index is protected (existed at module load time)
+        Checks if a desktop is protected by NAME or by index
     .PARAMETER Index
         The 0-based desktop index
+    .PARAMETER Name
+        The desktop name (optional, will be looked up if not provided)
     .OUTPUTS
         Boolean - $true if protected, $false if safe to modify
     #>
     param(
         [Parameter(Mandatory)]
-        [int]$Index
+        [int]$Index,
+
+        [Parameter()]
+        [string]$Name
     )
+
+    # If name not provided, look it up
+    if (-not $Name) {
+        try {
+            $desktop = Get-Desktop -Index $Index
+            $Name = $desktop.Name
+        }
+        catch {
+            $Name = ""
+        }
+    }
+
+    # Check if name is in protected list
+    if ($Name -and $script:PROTECTED_DESKTOP_NAMES -contains $Name) {
+        return $true
+    }
+
+    # Legacy fallback: check by index count
     return $Index -lt $script:PROTECTED_DESKTOP_COUNT
 }
 
@@ -241,6 +275,8 @@ function Assert-SafeDesktopOperation {
         Throws an error if attempting to modify a protected desktop
     .PARAMETER Index
         The 0-based desktop index
+    .PARAMETER Name
+        The desktop name (optional)
     .PARAMETER Operation
         Description of the operation being attempted
     #>
@@ -248,14 +284,26 @@ function Assert-SafeDesktopOperation {
         [Parameter(Mandatory)]
         [int]$Index,
 
+        [Parameter()]
+        [string]$Name,
+
         [Parameter(Mandatory)]
         [string]$Operation
     )
 
-    if (Test-DesktopProtected -Index $Index) {
-        $desktopNum = $Index + 1
-        $minManageable = $script:PROTECTED_DESKTOP_COUNT + 1
-        throw "BLOCKED: Cannot $Operation on protected Desktop $desktopNum (index $Index). Only Desktop $minManageable+ (index $($script:PROTECTED_DESKTOP_COUNT)+) can be modified."
+    # Get name if not provided
+    if (-not $Name) {
+        try {
+            $desktop = Get-Desktop -Index $Index
+            $Name = $desktop.Name
+        }
+        catch {
+            $Name = "Desktop $($Index + 1)"
+        }
+    }
+
+    if (Test-DesktopProtected -Index $Index -Name $Name) {
+        throw "BLOCKED: Cannot $Operation on protected desktop '$Name'. Protected desktops: $($script:PROTECTED_DESKTOP_NAMES -join ', ')"
     }
 }
 
@@ -1057,22 +1105,21 @@ function Close-TeamerWindow {
 #endregion
 
 # Display welcome message when dot-sourced
-$minManageableDesktop = $script:PROTECTED_DESKTOP_COUNT + 1
-$protectedList = if ($script:PROTECTED_DESKTOP_COUNT -eq 1) { "1" } else { "1-$($script:PROTECTED_DESKTOP_COUNT)" }
+$protectedNamesList = $script:PROTECTED_DESKTOP_NAMES -join ", "
 
 Write-Host ""
 Write-Host "Teamer CRUD Module Loaded" -ForegroundColor Green
-Write-Host "Protected Desktops: $protectedList (indices 0-$($script:PROTECTED_DESKTOP_COUNT - 1)) - $($script:PROTECTED_DESKTOP_COUNT) existing desktop(s)" -ForegroundColor Yellow
-Write-Host "Manageable: Desktop $minManageableDesktop+ (newly created)" -ForegroundColor Cyan
+Write-Host "Protected Desktops (by name): $protectedNamesList" -ForegroundColor Yellow
+Write-Host "Manageable: Any desktop NOT in protected list" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Commands:" -ForegroundColor Cyan
 Write-Host "  Show-TeamerTree               - Display system tree" -ForegroundColor White
 Write-Host "  New-TeamerDesktop             - Create new desktop" -ForegroundColor White
 Write-Host "  New-TeamerTerminal            - Launch terminal" -ForegroundColor White
-Write-Host "  Rename-TeamerDesktop          - Rename desktop ($minManageableDesktop+)" -ForegroundColor White
-Write-Host "  Move-TeamerWindow             - Move window (to $minManageableDesktop+)" -ForegroundColor White
+Write-Host "  Rename-TeamerDesktop          - Rename desktop (non-protected)" -ForegroundColor White
+Write-Host "  Move-TeamerWindow             - Move window" -ForegroundColor White
 Write-Host "  Switch-TeamerDesktop          - Switch desktop" -ForegroundColor White
 Write-Host "  Pin-TeamerWindow              - Pin/unpin window" -ForegroundColor White
-Write-Host "  Remove-TeamerDesktop          - Remove desktop ($minManageableDesktop+)" -ForegroundColor White
-Write-Host "  Close-TeamerWindow            - Close window (on $minManageableDesktop+)" -ForegroundColor White
+Write-Host "  Remove-TeamerDesktop          - Remove desktop (non-protected)" -ForegroundColor White
+Write-Host "  Close-TeamerWindow            - Close window (non-protected desktop)" -ForegroundColor White
 Write-Host ""

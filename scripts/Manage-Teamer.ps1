@@ -15,7 +15,8 @@
 
 #region Constants
 
-$script:PROJECT_ROOT = "E:\Projects\teamer"
+# Dynamically resolve project root from script location for portability
+$script:PROJECT_ROOT = Split-Path -Parent $PSScriptRoot
 
 # Protected desktops by NAME (more reliable than index which can shift)
 # These desktops cannot be removed or have windows closed by Teamer
@@ -34,143 +35,13 @@ $script:PROTECTED_DESKTOP_COUNT = 0  # Will be set during initialization
 
 #region Win32 API Definitions
 
-# Only add type if not already loaded
-if (-not ([System.Management.Automation.PSTypeName]'TeamerWin32').Type) {
-    Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Collections.Generic;
-
-public class TeamerWin32 {
-    [DllImport("user32.dll")]
-    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-
-    [DllImport("user32.dll")]
-    public static extern bool IsWindowVisible(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    public static extern bool IsIconic(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    public static extern bool IsZoomed(IntPtr hWnd);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
-
-    [DllImport("user32.dll")]
-    public static extern int GetWindowTextLength(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
-
-    [DllImport("user32.dll")]
-    public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-
-    [DllImport("user32.dll")]
-    public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFOEX lpmi);
-
-    [DllImport("user32.dll")]
-    public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-    public const int GWL_STYLE = -16;
-    public const int GWL_EXSTYLE = -20;
-    public const uint WS_VISIBLE = 0x10000000;
-    public const uint WS_CAPTION = 0x00C00000;
-    public const uint WS_EX_TOOLWINDOW = 0x00000080;
-    public const uint WS_EX_APPWINDOW = 0x00040000;
-    public const uint MONITOR_DEFAULTTONEAREST = 2;
-    public const uint WM_CLOSE = 0x0010;
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct RECT {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct MONITORINFOEX {
-        public int cbSize;
-        public RECT rcMonitor;
-        public RECT rcWork;
-        public uint dwFlags;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
-        public string szDevice;
-    }
-
-    public static string GetWindowTitle(IntPtr hWnd) {
-        int length = GetWindowTextLength(hWnd);
-        if (length == 0) return "";
-        StringBuilder sb = new StringBuilder(length + 1);
-        GetWindowText(hWnd, sb, sb.Capacity);
-        return sb.ToString();
-    }
-
-    public static string GetWindowClassName(IntPtr hWnd) {
-        StringBuilder sb = new StringBuilder(256);
-        GetClassName(hWnd, sb, sb.Capacity);
-        return sb.ToString();
-    }
-
-    public static List<IntPtr> GetAllWindows() {
-        List<IntPtr> windows = new List<IntPtr>();
-        EnumWindows((hWnd, lParam) => {
-            windows.Add(hWnd);
-            return true;
-        }, IntPtr.Zero);
-        return windows;
-    }
-
-    public static bool IsAltTabWindow(IntPtr hWnd) {
-        if (!IsWindowVisible(hWnd)) return false;
-
-        int style = GetWindowLong(hWnd, GWL_STYLE);
-        int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
-
-        if ((exStyle & WS_EX_TOOLWINDOW) != 0 && (exStyle & WS_EX_APPWINDOW) == 0)
-            return false;
-
-        if ((style & WS_CAPTION) != WS_CAPTION)
-            return false;
-
-        if (GetWindowTextLength(hWnd) == 0)
-            return false;
-
-        return true;
-    }
-
-    public static string GetMonitorDeviceName(IntPtr hWnd) {
-        IntPtr hMonitor = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
-        MONITORINFOEX mi = new MONITORINFOEX();
-        mi.cbSize = Marshal.SizeOf(typeof(MONITORINFOEX));
-        if (GetMonitorInfo(hMonitor, ref mi)) {
-            return mi.szDevice;
-        }
-        return "Unknown";
-    }
-
-    public static bool CloseWindow(IntPtr hWnd) {
-        return PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-    }
+# Load shared Win32 module
+$script:Win32ModulePath = Join-Path $PSScriptRoot "TeamerWin32.ps1"
+if (Test-Path $script:Win32ModulePath) {
+    . $script:Win32ModulePath
 }
-"@
+else {
+    throw "TeamerWin32.ps1 not found at $script:Win32ModulePath"
 }
 
 #endregion

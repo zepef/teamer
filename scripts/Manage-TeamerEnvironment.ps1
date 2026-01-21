@@ -18,7 +18,8 @@
 
 #region Constants
 
-$script:PROJECT_ROOT = "E:\Projects\teamer"
+# Dynamically resolve project root from script location for portability
+$script:PROJECT_ROOT = Split-Path -Parent $PSScriptRoot
 $script:ENVIRONMENTS_ROOT = Join-Path $script:PROJECT_ROOT "environments"
 $script:TEMPLATES_PATH = Join-Path $script:ENVIRONMENTS_ROOT "templates"
 $script:PROFILES_PATH = Join-Path $script:ENVIRONMENTS_ROOT "profiles"
@@ -26,9 +27,186 @@ $script:LAYOUTS_PATH = Join-Path $script:ENVIRONMENTS_ROOT "layouts"
 $script:PROJECTS_PATH = Join-Path $script:ENVIRONMENTS_ROOT "projects"
 $script:SERVICES_PATH = Join-Path $script:ENVIRONMENTS_ROOT "services"
 $script:STATE_FILE = Join-Path $script:ENVIRONMENTS_ROOT "state.json"
+$script:LOG_FILE = Join-Path $script:ENVIRONMENTS_ROOT "teamer.log"
 
 # Track active environments and their desktop indices (loaded from state file)
 $script:ActiveEnvironments = @{}
+
+# Dangerous command patterns to block in lifecycle commands
+$script:BLOCKED_COMMAND_PATTERNS = @(
+    'Remove-Item.*-Recurse.*-Force',          # Recursive force delete
+    'rm\s+-rf\s+/',                           # Unix-style dangerous rm
+    'Format-Volume',                          # Disk formatting
+    'Clear-Disk',                             # Disk clearing
+    'Stop-Computer',                          # Shutdown
+    'Restart-Computer',                       # Restart
+    'Remove-PSDrive',                         # Remove drives
+    '>\s*\$null\s*2>&1.*Remove',             # Hidden destructive commands
+    'Invoke-WebRequest.*\|\s*Invoke-Expression', # Download and execute
+    'iex\s*\(.*Net\.WebClient',              # Download and execute variant
+    'Start-Process.*-Verb\s+RunAs'           # Elevation attempts
+)
+
+#endregion
+
+#region Logging
+
+function Write-TeamerLog {
+    <#
+    .SYNOPSIS
+        Writes a message to the Teamer log file
+    .PARAMETER Message
+        The message to log
+    .PARAMETER Level
+        Log level: Info, Warning, Error
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$Message,
+
+        [Parameter()]
+        [ValidateSet('Info', 'Warning', 'Error')]
+        [string]$Level = 'Info'
+    )
+
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logEntry = "[$timestamp] [$Level] $Message"
+
+    try {
+        $logEntry | Out-File -FilePath $script:LOG_FILE -Append -Encoding UTF8
+    }
+    catch {
+        # Silently fail if logging fails - don't interrupt main operations
+    }
+}
+
+function Get-TeamerLog {
+    <#
+    .SYNOPSIS
+        Gets recent log entries
+    .PARAMETER Lines
+        Number of lines to retrieve (default: 50)
+    #>
+    param(
+        [Parameter()]
+        [int]$Lines = 50
+    )
+
+    if (Test-Path $script:LOG_FILE) {
+        Get-Content -Path $script:LOG_FILE -Tail $Lines
+    }
+    else {
+        Write-Host "No log file found at $script:LOG_FILE" -ForegroundColor Yellow
+    }
+}
+
+function Clear-TeamerLog {
+    <#
+    .SYNOPSIS
+        Clears the Teamer log file
+    #>
+    if (Test-Path $script:LOG_FILE) {
+        Remove-Item -Path $script:LOG_FILE -Force
+        Write-Host "Log file cleared." -ForegroundColor Green
+    }
+}
+
+#endregion
+
+#region Command Sanitization
+
+function Test-CommandSafe {
+    <#
+    .SYNOPSIS
+        Validates a command against blocked patterns for security
+    .PARAMETER Command
+        The command string to validate
+    .OUTPUTS
+        PSCustomObject with IsValid and Reason properties
+    #>
+    param(
+        [Parameter(Mandatory=$false)]
+        [AllowEmptyString()]
+        [string]$Command
+    )
+
+    # Check for empty commands
+    if ([string]::IsNullOrWhiteSpace($Command)) {
+        return [PSCustomObject]@{ IsValid = $false; Reason = "Empty command" }
+    }
+
+    # Check against blocked patterns
+    foreach ($pattern in $script:BLOCKED_COMMAND_PATTERNS) {
+        if ($Command -match $pattern) {
+            return [PSCustomObject]@{
+                IsValid = $false
+                Reason = "Command matches blocked pattern: $pattern"
+            }
+        }
+    }
+
+    return [PSCustomObject]@{ IsValid = $true; Reason = $null }
+}
+
+function Invoke-TeamerCommand {
+    <#
+    .SYNOPSIS
+        Safely executes a lifecycle command with validation and logging
+    .PARAMETER Command
+        The command to execute
+    .PARAMETER WorkingDirectory
+        Working directory for the command
+    .PARAMETER Phase
+        The lifecycle phase (onStart/onStop) for logging
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$Command,
+
+        [Parameter()]
+        [string]$WorkingDirectory,
+
+        [Parameter()]
+        [ValidateSet('onStart', 'onStop')]
+        [string]$Phase = 'onStart'
+    )
+
+    # Validate command
+    $validation = Test-CommandSafe -Command $Command
+    if (-not $validation.IsValid) {
+        $errorMsg = "BLOCKED: $($validation.Reason) - Command: $Command"
+        Write-TeamerLog -Message $errorMsg -Level Error
+        Write-Warning $errorMsg
+        return @{ Success = $false; Error = $validation.Reason }
+    }
+
+    Write-TeamerLog -Message "[$Phase] Executing: $Command" -Level Info
+
+    try {
+        if ($WorkingDirectory -and (Test-Path $WorkingDirectory)) {
+            Push-Location $WorkingDirectory
+        }
+
+        # Use Start-Process for better isolation instead of Invoke-Expression
+        # For simple commands, we still use Invoke-Expression but with validation
+        $result = Invoke-Expression $Command 2>&1
+
+        Write-TeamerLog -Message "[$Phase] Completed: $Command" -Level Info
+
+        return @{ Success = $true; Output = $result }
+    }
+    catch {
+        $errorMsg = "[$Phase] Failed: $Command - Error: $_"
+        Write-TeamerLog -Message $errorMsg -Level Error
+        Write-Warning $errorMsg
+        return @{ Success = $false; Error = $_.Exception.Message }
+    }
+    finally {
+        if ($WorkingDirectory -and (Test-Path $WorkingDirectory)) {
+            Pop-Location
+        }
+    }
+}
 
 #endregion
 
@@ -779,21 +957,19 @@ function Start-TeamerEnvironment {
     }
 
     Write-Host "Starting environment: $($config.name)" -ForegroundColor Cyan
+    Write-TeamerLog -Message "Starting environment: $Name" -Level Info
 
-    # Run onStart commands
+    # Run onStart commands with validation
     if ($config.onStart -and $config.onStart.Count -gt 0) {
         $workDir = if ($config.workingDirectory) { $config.workingDirectory } else { $PWD }
         Write-Host "Running startup commands in $workDir..." -ForegroundColor Yellow
 
-        Push-Location $workDir
-        try {
-            foreach ($cmd in $config.onStart) {
-                Write-Host "  > $cmd" -ForegroundColor DarkGray
-                Invoke-Expression $cmd
+        foreach ($cmd in $config.onStart) {
+            Write-Host "  > $cmd" -ForegroundColor DarkGray
+            $cmdResult = Invoke-TeamerCommand -Command $cmd -WorkingDirectory $workDir -Phase 'onStart'
+            if (-not $cmdResult.Success) {
+                Write-Warning "Startup command failed: $cmd"
             }
-        }
-        finally {
-            Pop-Location
         }
     }
 
@@ -977,21 +1153,19 @@ function Stop-TeamerEnvironment {
     }
 
     Write-Host "Stopping environment: $($config.name)" -ForegroundColor Cyan
+    Write-TeamerLog -Message "Stopping environment: $Name" -Level Info
 
-    # Run onStop commands
+    # Run onStop commands with validation
     if ($config.onStop -and $config.onStop.Count -gt 0) {
         $workDir = if ($config.workingDirectory) { $config.workingDirectory } else { $PWD }
         Write-Host "Running shutdown commands..." -ForegroundColor Yellow
 
-        Push-Location $workDir
-        try {
-            foreach ($cmd in $config.onStop) {
-                Write-Host "  > $cmd" -ForegroundColor DarkGray
-                Invoke-Expression $cmd
+        foreach ($cmd in $config.onStop) {
+            Write-Host "  > $cmd" -ForegroundColor DarkGray
+            $cmdResult = Invoke-TeamerCommand -Command $cmd -WorkingDirectory $workDir -Phase 'onStop'
+            if (-not $cmdResult.Success) {
+                Write-Warning "Shutdown command failed: $cmd"
             }
-        }
-        finally {
-            Pop-Location
         }
     }
 
@@ -1219,7 +1393,8 @@ function Convert-ToWslPath {
         Returns: /mnt/e/Projects/teamer
     #>
     param(
-        [Parameter(Mandatory)]
+        [Parameter(Mandatory=$false)]
+        [AllowEmptyString()]
         [string]$WindowsPath
     )
 
@@ -1634,88 +1809,8 @@ function Start-TeamerTerminalTabGroup {
 
 #region Grid and Window Positioning
 
-# Load Win32 API for window positioning
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-
-public class Win32Window {
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-
-    [DllImport("user32.dll")]
-    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetForegroundWindow();
-
-    // DWM API for getting extended frame bounds (visible window area without invisible borders)
-    [DllImport("dwmapi.dll")]
-    public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct RECT {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
-
-    public const uint SWP_NOACTIVATE = 0x0010;
-    public const uint SWP_NOZORDER = 0x0004;
-
-    // DWMWA_EXTENDED_FRAME_BOUNDS = 9 - gets the visible window bounds excluding invisible borders
-    public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
-
-    // Get the invisible border offset for a window
-    // Returns the difference between window rect and extended frame bounds
-    public static void GetFrameOffset(IntPtr hwnd, out int left, out int top, out int right, out int bottom) {
-        RECT windowRect, extendedRect;
-        GetWindowRect(hwnd, out windowRect);
-        DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, out extendedRect, Marshal.SizeOf(typeof(RECT)));
-
-        // Invisible border = window rect - extended frame bounds
-        left = extendedRect.Left - windowRect.Left;
-        top = extendedRect.Top - windowRect.Top;
-        right = windowRect.Right - extendedRect.Right;
-        bottom = windowRect.Bottom - extendedRect.Bottom;
-    }
-}
-"@ -ErrorAction SilentlyContinue
-
-function Get-WindowFrameOffset {
-    <#
-    .SYNOPSIS
-        Gets the invisible border offset for a window.
-        Windows 10/11 have invisible borders (~7px) that affect positioning.
-    .PARAMETER Handle
-        Window handle
-    .RETURNS
-        Hashtable with Left, Top, Right, Bottom offsets
-    #>
-    param([IntPtr]$Handle)
-
-    # Windows 10/11 standard invisible border sizes
-    # These are consistent across most applications
-    # Left: ~7px invisible border
-    # Top: 0px (no invisible border at top)
-    # Right: ~7px invisible border
-    # Bottom: ~7px invisible border
-    #
-    # When we position a window at X,Y, the window frame (including invisible borders)
-    # is placed there. To have the VISIBLE window at X,Y, we need to move the frame
-    # left by 7px so the visible part ends up at the target position.
-
-    return @{
-        Left = 7
-        Top = 0
-        Right = 7
-        Bottom = 7
-    }
-}
+# Win32 APIs are loaded from shared TeamerWin32.ps1 module via Manage-Teamer.ps1
+# The Get-TeamerWindowFrameOffset function uses DWM API with fallback to hardcoded values
 
 function Get-TeamerScreenBounds {
     <#
@@ -1860,13 +1955,13 @@ function Move-TeamerWindow {
 
     if ($Process.MainWindowHandle -ne [IntPtr]::Zero) {
         # Get invisible border offset to compensate
-        $frameOffset = Get-WindowFrameOffset -Handle $Process.MainWindowHandle
+        $frameOffset = Get-TeamerWindowFrameOffset -Handle $Process.MainWindowHandle
         $adjustedX = $X - $frameOffset.Left
         $adjustedY = $Y - $frameOffset.Top
         $adjustedWidth = $Width + $frameOffset.Left + $frameOffset.Right
         $adjustedHeight = $Height + $frameOffset.Top + $frameOffset.Bottom
 
-        [Win32Window]::MoveWindow($Process.MainWindowHandle, $adjustedX, $adjustedY, $adjustedWidth, $adjustedHeight, $true) | Out-Null
+        [TeamerWin32]::MoveWindow($Process.MainWindowHandle, $adjustedX, $adjustedY, $adjustedWidth, $adjustedHeight, $true) | Out-Null
         return $true
     }
 
@@ -2040,7 +2135,7 @@ function Apply-TeamerTiling {
 
             Write-Host "  Moving $($matchedWindow.ProcessName) to ($row,$col) span($rowSpan,$colSpan)" -ForegroundColor DarkGray
 
-            [Win32Window]::MoveWindow(
+            [TeamerWin32]::MoveWindow(
                 $matchedWindow.Handle,
                 $bounds.X,
                 $bounds.Y,
@@ -2167,7 +2262,7 @@ function Apply-TeamerDesktopTiling {
 
             # Get invisible border offset for this window
             # Windows 10/11 have invisible borders (~7px) that affect positioning
-            $frameOffset = Get-WindowFrameOffset -Handle $matchedWindow.Handle
+            $frameOffset = Get-TeamerWindowFrameOffset -Handle $matchedWindow.Handle
 
             # Adjust position to compensate for invisible borders
             # We move the window frame left/up by the border amount so visible part is at target position
@@ -2180,18 +2275,18 @@ function Apply-TeamerDesktopTiling {
             Write-Host "    $($matchedWindow.ProcessName) -> X=$($bounds.X) Y=$($bounds.Y) W=$($bounds.Width) H=$($bounds.Height) (adjusted: X=$adjustedX Y=$adjustedY W=$adjustedWidth H=$adjustedHeight)" -ForegroundColor DarkGray
 
             # Use SetWindowPos for more reliable positioning
-            [Win32Window]::SetWindowPos(
+            [TeamerWin32]::SetWindowPos(
                 $matchedWindow.Handle,
                 [IntPtr]::Zero,
                 $adjustedX,
                 $adjustedY,
                 $adjustedWidth,
                 $adjustedHeight,
-                [Win32Window]::SWP_NOZORDER -bor [Win32Window]::SWP_NOACTIVATE
+                [TeamerWin32]::SWP_NOZORDER -bor [TeamerWin32]::SWP_NOACTIVATE
             ) | Out-Null
 
             # Also use MoveWindow as backup
-            [Win32Window]::MoveWindow(
+            [TeamerWin32]::MoveWindow(
                 $matchedWindow.Handle,
                 $adjustedX,
                 $adjustedY,
@@ -2246,6 +2341,13 @@ Write-Host "Tiling Commands:" -ForegroundColor Cyan
 Write-Host "  Get-TeamerTiling            - Get tiling config for desktop" -ForegroundColor White
 Write-Host "  Set-TeamerTiling            - Set tiling config for desktop" -ForegroundColor White
 Write-Host "  Apply-TeamerTiling          - Apply tiling to current windows" -ForegroundColor White
+Write-Host ""
+Write-Host "Logging Commands:" -ForegroundColor Cyan
+Write-Host "  Get-TeamerLog               - View recent log entries" -ForegroundColor White
+Write-Host "  Clear-TeamerLog             - Clear the log file" -ForegroundColor White
+Write-Host ""
+Write-Host "Security:" -ForegroundColor Cyan
+Write-Host "  Test-CommandSafe            - Validate command safety" -ForegroundColor White
 Write-Host ""
 
 #endregion

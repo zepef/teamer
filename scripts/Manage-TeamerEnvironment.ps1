@@ -1745,25 +1745,16 @@ function Start-TeamerTerminalTabGroup {
                     $wslWorkDir = Convert-ToWslPath $workDir
                 }
 
-                $wslCmd = "wsl.exe -d $distribution"
-                $cmdParts = @()
-                if ($wslWorkDir) {
-                    $cmdParts += "cd '$wslWorkDir'"
-                }
-                if ($profileConfig -and $profileConfig.startupCommands) {
-                    $cmdParts += $profileConfig.startupCommands
-                }
-                if ($term.command) {
-                    $cmdParts += $term.command
-                }
+                # Use Windows Terminal's WSL profile directly for cleaner tab handling
+                $termProfile = if ($profileConfig -and $profileConfig.terminalProfile) { $profileConfig.terminalProfile } else { "Ubuntu" }
+                $tabArgs += "-p"
+                $tabArgs += "`"$termProfile`""
 
-                if ($cmdParts.Count -gt 0) {
-                    $bashCmd = $cmdParts -join ' && '
-                    $bashCmd = $bashCmd -replace '"', '\"'
-                    $wslCmd += " -- bash -c `"$bashCmd; exec bash`""
+                # Use --startingDirectory for WSL path (Windows Terminal handles conversion)
+                if ($workDir -and (Test-Path $workDir)) {
+                    $tabArgs += "-d"
+                    $tabArgs += "`"$workDir`""
                 }
-
-                $tabArgs += $wslCmd
             }
             'pwsh' {
                 $tabArgs += "-p"

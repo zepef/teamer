@@ -1,0 +1,30 @@
+{
+    "$schema": "../schemas/environment.schema.json",
+    "name": "3MF-DEV",
+    "description": "3MF Development Environment",
+    "workingDirectory": "E:\\Projects\\teamer",
+    "layout": "single-focus",
+    "desktops": [
+        {
+            "name": "Dev",
+            "windows": [
+                {
+                    "type": "terminal",
+                    "profile": "powershell",
+                    "tabGroup": "main-terminal",
+                    "title": "PowerShell",
+                    "tabColor": "#FF8C00"
+                },
+                {
+                    "type": "terminal",
+                    "profile": "wsl-ubuntu",
+                    "tabGroup": "main-terminal",
+                    "title": "WSL",
+                    "tabColor": "#0078D4"
+                }
+            ]
+        }
+    ],
+    "onStart": [],
+    "onStop": []
+}

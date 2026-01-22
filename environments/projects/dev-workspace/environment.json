@@ -1,0 +1,56 @@
+﻿{
+    "desktops":  [
+                     {
+                         "name":  "Code",
+                         "windows":  [
+                                         {
+                                             "type":  "terminal",
+                                             "profile":  "wsl-ubuntu",
+                                             "zone":  "main",
+                                             "cwd":  "."
+                                         },
+                                         {
+                                             "type":  "terminal",
+                                             "profile":  "powershell",
+                                             "zone":  "main",
+                                             "command":  "npm run dev"
+                                         },
+                                         {
+                                             "type":  "app",
+                                             "path":  "code",
+                                             "zone":  "main",
+                                             "args":  [
+                                                          "."
+                                                      ]
+                                         }
+                                     ]
+                     },
+                     {
+                         "name":  "Services",
+                         "windows":  [
+                                         {
+                                             "type":  "browser",
+                                             "url":  "http://localhost:3000",
+                                             "zone":  "secondary"
+                                         },
+                                         {
+                                             "type":  "terminal",
+                                             "profile":  "powershell",
+                                             "zone":  "secondary",
+                                             "command":  "npm run logs"
+                                         }
+                                     ]
+                     }
+                 ],
+    "name":  "Backend-frontend development workspace",
+    "workingDirectory":  "E:\\Projects\\teamer",
+    "description":  "Backend-frontend development workspace",
+    "layout":  "dual-code-services",
+    "$schema":  "../schemas/environment.schema.json",
+    "onStop":  [
+
+               ],
+    "onStart":  [
+                    "npm install"
+                ]
+}
